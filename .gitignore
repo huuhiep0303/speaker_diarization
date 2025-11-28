@@ -6,3 +6,5 @@ evaluation/eval_cache/
 evaluation/pretrained_models/
 pretrained_models/
 tmp_model/
+*/__pycache__/
+*.pyc

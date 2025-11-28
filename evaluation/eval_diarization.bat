@@ -1,84 +1,59 @@
 @echo off
-REM Script to run Speaker Diarization Evaluation on Windows
+echo ========================================
+echo SPEAKER DIARIZATION EVALUATION
+echo ========================================
 
 cd /d "%~dp0"
 
-echo ============================================================
-echo SPEAKER DIARIZATION EVALUATION
-echo ============================================================
-echo.
-
-REM Check if Python is available
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Python not found. Please install Python first.
-    pause
-    exit /b 1
-)
-
-REM Parse arguments or use defaults
-set DATA_DIR=%1
-set MODEL=%2
-set MAX_GENUINE=%3
-set MAX_IMPOSTOR=%4
-
-if "%DATA_DIR%"=="" (
-    set DATA_DIR=test_audio
-    echo Using default data_dir: test_audio
-)
-
-if "%MODEL%"=="" (
-    set MODEL=speechbrain
-    echo Using default model: speechbrain
-)
-
-if "%MAX_GENUINE%"=="" (
-    set MAX_GENUINE=50
-)
-
-if "%MAX_IMPOSTOR%"=="" (
-    set MAX_IMPOSTOR=100
+echo Activating virtual environment...
+if exist "..\..\venv\Scripts\activate.bat" (
+    call "..\..\venv\Scripts\activate.bat"
+) else if exist "..\cpuvenv\Scripts\activate.bat" (
+    call "..\cpuvenv\Scripts\activate.bat"
+) else if exist "..\venv\Scripts\activate.bat" (
+    call "..\venv\Scripts\activate.bat"
+) else (
+    echo Warning: No virtual environment found, using system Python
 )
 
 echo.
-echo Configuration:
-echo   Data directory: %DATA_DIR%
-echo   Model: %MODEL%
-echo   Max genuine pairs: %MAX_GENUINE%
-echo   Max impostor pairs: %MAX_IMPOSTOR%
+echo Installing required packages...
+pip install numpy tqdm
+
 echo.
+echo Choose evaluation mode:
+echo [1] Full dataset evaluation (all files - ~15000 files)
+echo [2] Quick test (100 files for testing)
+echo [3] Medium test (1000 files)
+echo [4] Custom number of files
+set /p choice="Enter your choice (1-4): "
 
-REM Check if data directory exists
-if not exist "%DATA_DIR%" (
-    echo ERROR: Data directory not found: %DATA_DIR%
-    echo.
-    echo Please create the directory and add speaker audio files
-    pause
-    exit /b 1
-)
-
-echo Starting evaluation...
-echo.
-
-python eval_diarization.py ^
-    --data_dir "%DATA_DIR%" ^
-    --model %MODEL% ^
-    --max_genuine %MAX_GENUINE% ^
-    --max_impostor %MAX_IMPOSTOR% ^
-    --use_cache
-
-if errorlevel 1 (
-    echo.
-    echo ERROR: Evaluation failed!
-    pause
-    exit /b 1
+if "%choice%"=="1" (
+    echo Running full dataset evaluation...
+    python eval_diarization.py
+) else if "%choice%"=="2" (
+    echo Running quick test with 100 files...
+    python eval_diarization.py --max_files 100
+) else if "%choice%"=="3" (
+    echo Running medium test with 1000 files...
+    python eval_diarization.py --max_files 1000
+) else if "%choice%"=="4" (
+    set /p max_files="Enter number of files to evaluate: "
+    python eval_diarization.py --max_files %max_files%
+) else (
+    echo Invalid choice, running quick test...
+    python eval_diarization.py --max_files 100
 )
 
 echo.
-echo ============================================================
-echo EVALUATION COMPLETED SUCCESSFULLY!
-echo ============================================================
-echo Results saved in: eval_results/
+echo ========================================
+echo EVALUATION COMPLETED
+echo ========================================
+echo.
+echo Results are saved in: eval_results/
+echo.
+echo To compare results, run:
+echo python compare_diarization.py
 echo.
 
 pause
