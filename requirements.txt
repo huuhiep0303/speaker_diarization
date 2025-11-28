@@ -13,3 +13,10 @@ speechbrain>=0.5.16
 # Audio processing
 sounddevice>=0.4.6
 librosa>=0.10.0
+soundfile>=0.12.0
+
+# Evaluation metrics
+jiwer>=3.0.0
+matplotlib>=3.7.0
+pandas>=2.0.0
+tqdm>=4.65.0

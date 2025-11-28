@@ -1,0 +1,12 @@
+{
+  "model": "sensevoice-speechbrain",
+  "num_samples": 398,
+  "avg_wer": 0.11703874726258023,
+  "avg_cer": 0.08324112634262922,
+  "avg_rtf": 1.3741529407622073,
+  "median_rtf": 0.9484114286205395,
+  "min_rtf": 0.46323957216577805,
+  "max_rtf": 10.751930495414673,
+  "timestamp": "2025-11-28T15:18:15.823725",
+  "checkpoint_file": "D:\\WORKSPACE\\VJ\\speaker-diarization\\realtime\\evaluation\\eval_results\\eval_asr_sensevoice-speechbrain_checkpoint.csv"
+}

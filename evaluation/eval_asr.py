@@ -671,7 +671,7 @@ Examples:
         return
     
     # Setup checkpoint file
-    checkpoint_name = f"eval_{model.model_name}_checkpoint.csv"
+    checkpoint_name = f"eval_asr_{model.model_name}_checkpoint.csv"
     
     # Evaluate
     print("\nStarting evaluation...")
@@ -687,7 +687,7 @@ Examples:
     print_summary(summary)
     
     # Save summary JSON
-    summary_json_name = f"eval_{model.model_name}_summary.json"
+    summary_json_name = f"eval_asr_{model.model_name}_summary.json"
     save_summary_json(summary, summary_json_name)
     
     print("\n✓ Evaluation completed successfully!")

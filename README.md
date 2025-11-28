@@ -19,7 +19,9 @@ realtime/
 ├── pretrained_models/                # Models đã tải về
 ├── evaluation/                       # Scripts đánh giá và so sánh
 │   ├── eval_asr.py                  # Đánh giá ASR (Speech Recognition)
-│   ├── eval_diarization.py          # Đánh giá Diarization
+│   ├── eval_diarization.py          # Đánh giá Diarization (Real Evaluation)
+│   ├── model_wrappers.py            # Wrapper classes cho các models
+│   ├── test_eval.py                 # Test script cho evaluation
 │   ├── compared.py                  # So sánh kết quả ASR
 │   ├── compare_diarization.py       # So sánh kết quả Diarization
 │   ├── eval_results/                # Kết quả đánh giá
@@ -116,17 +118,23 @@ python eval_asr.py --max_files 100  # Test nhanh với 100 files
 python eval_asr.py                  # Full dataset (~14,000+ files)
 ```
 
-### 2. Đánh giá Diarization
+### 2. Đánh giá Diarization (Real Evaluation)
 
 ```bash
 cd evaluation
 
-# Chạy đánh giá diarization
-eval_diarization.bat
+# Test với vài files trước
+python test_eval.py
 
-# Hoặc Python trực tiếp
+# Chạy đánh giá diarization cho 1 model
+python eval_diarization.py --models sensevoice --max_files 50
+
+# Chạy full evaluation cho cả 3 models
 python eval_diarization.py --max_files 100  # Test nhanh
-python eval_diarization.py                  # Full dataset
+python eval_diarization.py                  # Full dataset (~14,000+ files)
+
+# Chạy cho models cụ thể
+python eval_diarization.py --models whisper-speechbrain sensevoice-speechbrain
 ```
 
 ### 3. So sánh kết quả
