@@ -1,0 +1,10 @@
+{
+  "start_time": "2025-11-27T11:37:49.269797",
+  "model": "FunAudioLLM/SenseVoiceSmall",
+  "device": "cpu",
+  "sample_rate": 16000,
+  "segments": [],
+  "end_time": "2025-11-27T11:39:09.020926",
+  "total_segments": 0,
+  "full_transcript": ""
+}

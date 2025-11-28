@@ -1,0 +1,110 @@
+{
+  "source": "audio",
+  "start_time": "2025-11-27T15:57:20.889204",
+  "config": {
+    "asr_model": "faster-whisper-base",
+    "speaker_model": "speechbrain/spkrec-ecapa-voxceleb",
+    "sample_rate": 16000,
+    "device": "cpu",
+    "recv_buffer_sec": 1.0,
+    "full_buffer_sec": 10.0
+  },
+  "overall_rtf": 0.366,
+  "total_segments": 3,
+  "total_duration": 47.8,
+  "segments": [
+    {
+      "start": 2.07,
+      "end": 8.84,
+      "duration": 6.78,
+      "text": "the fine work that we work with in that if there is a surplus government land, then it is put to.",
+      "speaker": "spk_01",
+      "language": "en",
+      "rtf": 0.507,
+      "partial_texts": [
+        "the final work that we were.",
+        "is in a different way.",
+        "there is a safer government.",
+        "and turn it in.",
+        "Please put it."
+      ],
+      "end_of_speech": false
+    },
+    {
+      "start": 9.3,
+      "end": 11.44,
+      "duration": 2.14,
+      "text": "The market. Yeah, the disposal.",
+      "speaker": "spk_02",
+      "language": "en",
+      "rtf": 1.586,
+      "partial_texts": [
+        "Mark it",
+        "Yeah."
+      ],
+      "end_of_speech": false
+    },
+    {
+      "start": 11.67,
+      "end": 47.8,
+      "duration": 36.13,
+      "text": "So, I suppose there was that little bit of conflict, perceived conflict with what we do and the policy that exists. So it's probably quite variable, I guess, depending on the politics of the day. Have you mentioned that there's a framework you're working with in there? Would you say you're more guided by that framework or the politics of the day when you're making those decisions? It is the framework. So the government land transaction guidelines dictate that we are selling government land. government land okay and more surplus government landers should say yeah so that's what we work work within but",
+      "speaker": "spk_03",
+      "language": "en",
+      "rtf": 0.295,
+      "partial_texts": [
+        "So...",
+        "As far as I'm concerned.",
+        "There was that little bit of...",
+        "Conflict.",
+        "in conflict with",
+        "with what we do.",
+        "And...",
+        "and the poles.",
+        "that exist.",
+        "So it's from...",
+        "really quite variable.",
+        "against any other politics.",
+        "of the day.",
+        "mentioned that there's a...",
+        "framework you're working with.",
+        "Would you say you're more?",
+        "I'm going to cut it further.",
+        "Framework",
+        "Oh, that...",
+        "the politics of the...",
+        "when you're making those decisions.",
+        "It's legit.",
+        "it is the framework",
+        "Yeah.",
+        "the government.",
+        "land transaction.",
+        "All lines.",
+        "time the way.",
+        "of selling.",
+        "government made.",
+        "Okay.",
+        "the surface government landage.",
+        "So, yeah.",
+        "time. That's why.",
+        "Well, we worked with the...",
+        "Thanks, bye."
+      ],
+      "end_of_speech": true
+    }
+  ],
+  "speaker_stats": {
+    "spk_01": {
+      "count": 1,
+      "duration": 6.78
+    },
+    "spk_02": {
+      "count": 1,
+      "duration": 2.14
+    },
+    "spk_03": {
+      "count": 1,
+      "duration": 36.13
+    }
+  }
+}

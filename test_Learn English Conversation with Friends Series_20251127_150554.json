@@ -1,0 +1,47 @@
+{
+  "start_time": "2025-11-27T15:05:20.578417",
+  "model": {
+    "asr": "FunAudioLLM/SenseVoiceSmall",
+    "speaker": "speechbrain/spkrec-ecapa-voxceleb"
+  },
+  "device": "cpu",
+  "sample_rate": 16000,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "text": "That was supposed to be like a private.",
+      "speaker": "spk_01",
+      "language": "auto"
+    },
+    {
+      "start": 2.7,
+      "end": 5.7,
+      "text": "I personal thing between uss.",
+      "speaker": "spk_01",
+      "language": "auto"
+    },
+    {
+      "start": 5.4,
+      "end": 8.4,
+      "text": "Poebe is my girlfriend. Okay, we tell each other.",
+      "speaker": "spk_01",
+      "language": "auto"
+    },
+    {
+      "start": 8.1,
+      "end": 8.97,
+      "text": "They're everything.",
+      "speaker": "spk_01",
+      "language": "auto"
+    }
+  ],
+  "source": {
+    "type": "youtube",
+    "url": "https://www.youtube.com/shorts/L5RgaKQLChw",
+    "title": "Learn English Conversation with Friends Series"
+  },
+  "end_time": "2025-11-27T15:06:00.976977",
+  "total_segments": 4,
+  "full_transcript": "That was supposed to be like a private. I personal thing between uss. Poebe is my girlfriend. Okay, we tell each other. They're everything."
+}

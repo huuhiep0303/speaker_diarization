@@ -1,0 +1,17 @@
+{
+  "start_time": "2025-11-27T15:11:16.352784",
+  "model": {
+    "asr": "FunAudioLLM/SenseVoiceSmall",
+    "speaker": "speechbrain/spkrec-ecapa-voxceleb"
+  },
+  "device": "cpu",
+  "sample_rate": 16000,
+  "segments": [],
+  "source": {
+    "type": "youtube",
+    "url": "https://www.youtube.com/shorts/L5RgaKQLChw",
+    "title": "Learn English Conversation with Friends Series"
+  },
+  "end_time": "2025-11-27T15:12:15.789913",
+  "total_segments": 0
+}

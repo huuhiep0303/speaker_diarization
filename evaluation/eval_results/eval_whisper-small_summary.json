@@ -1,0 +1,12 @@
+{
+  "model": "whisper-small",
+  "num_samples": 398,
+  "avg_wer": 0.16122234991099366,
+  "avg_cer": 0.12578724674850553,
+  "avg_rtf": 2.7492640631953233,
+  "median_rtf": 2.4989678626718685,
+  "min_rtf": 0.9699659131535696,
+  "max_rtf": 8.105210077778093,
+  "timestamp": "2025-11-28T12:30:31.640117",
+  "checkpoint_file": "D:\\WORKSPACE\\VJ\\speaker-diarization\\realtime\\evaluation\\eval_results\\eval_whisper-small_checkpoint.csv"
+}

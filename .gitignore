@@ -1,0 +1,8 @@
+__pycache__/
+cpuvenv/
+venv/
+dataset/
+evaluation/eval_cache/
+evaluation/pretrained_models/
+pretrained_models/
+tmp_model/

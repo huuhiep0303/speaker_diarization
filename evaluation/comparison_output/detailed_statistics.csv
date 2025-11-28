@@ -1,0 +1,4 @@
+﻿Model,Samples,WER Mean (%),WER Std (%),WER Median (%),CER Mean (%),CER Std (%),CER Median (%),RTF Mean,RTF Std,RTF Median,Realtime %
+SenseVoice + SpeechBrain,398,11.70,15.68,7.14,8.32,13.17,5.13,0.355,0.112,0.329,99.7%
+SenseVoice,398,13.89,16.78,9.09,10.08,14.27,6.45,0.805,0.371,0.714,79.9%
+Whisper Small,398,16.12,17.02,12.92,12.58,15.15,9.09,2.749,1.146,2.499,0.3%
