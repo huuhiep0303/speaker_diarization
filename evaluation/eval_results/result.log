@@ -1,0 +1,20 @@
+=== Evaluating whisper embeddings ===
+Computing metrics on 10000 valid trials
+EER: 0.32% | FAR@EER: 0.32% | FRR@EER: 0.32% | Thr(EER): 0.6336
+Precision@EER: 99.68% | Recall@EER: 99.68% | F1@EER: 99.68%
+Best F1: 99.75% | Precision@F1: 99.64% | Recall@F1: 99.86% | Thr(F1): 0.6250
+AUC: 0.9999
+
+=== Evaluating sensevoice embeddings ===
+Computing metrics on 10000 valid trials
+EER: 0.32% | FAR@EER: 0.32% | FRR@EER: 0.32% | Thr(EER): 0.6339
+Precision@EER: 99.68% | Recall@EER: 99.68% | F1@EER: 99.68%
+Best F1: 99.75% | Precision@F1: 99.64% | Recall@F1: 99.86% | Thr(F1): 0.6247
+AUC: 0.9999
+
+=== Evaluating sensevoice-speechbrain embeddings ===
+Computing metrics on 10000 valid trials
+EER: 0.32% | FAR@EER: 0.32% | FRR@EER: 0.32% | Thr(EER): 0.6336
+Precision@EER: 99.68% | Recall@EER: 99.68% | F1@EER: 99.68%
+Best F1: 99.75% | Precision@F1: 99.64% | Recall@F1: 99.86% | Thr(F1): 0.6250
+AUC: 0.9999

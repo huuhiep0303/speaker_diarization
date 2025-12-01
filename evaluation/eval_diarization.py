@@ -1,15 +1,30 @@
 """
 Evaluation script for Speaker Diarization Models
-Đánh giá khả năng phân biệt speaker của các models:
+Đánh giá khả năng phân biệt speaker của các models trong folder realtime/:
 - realtime_diarization_improved.py (Whisper + SpeechBrain)
 - sen_voice.py (SenseVoice)
 - senvoi_spebrai_fixed.py (SenseVoice + SpeechBrain)
 
+QUAN TRỌNG:
+Đây là đánh giá speaker verification, KHÔNG phải diarization end-to-end.
+Kết quả đo khả năng phân biệt embeddings trên trials đơn giản.
+
+LÝ DO KẾT QUẢ CÓ THỂ CAO BẤT THƯỜNG (EER ~0.3%):
+1. Trials dễ: positive pairs có thể từ cùng file/phiên → cosine gần 1
+2. Negative pairs dễ: speakers rất khác nhau hoặc khác domain
+3. Dataset JVS sạch, ít nhiễu → embeddings phân tách tốt
+4. Không có overlap/noise trong test conditions
+
+ĐỂ CÓ ĐÁNH GIÁ THỰC TẾ HƠN:
+- Cần tạo trials khó hơn (khác file, cách xa nhau, không overlap)
+- Đánh giá DER end-to-end trên audio thực với collar 0.25s
+- Test trên data có nhiễu, overlap speakers
+
 Metrics:
-- EER (Equal Error Rate)
-- FAR (False Acceptance Rate)
-- FRR (False Rejection Rate)
-- AUC (Area Under Curve)
+- EER (Equal Error Rate): FAR = FRR
+- FAR (False Acceptance Rate): nhận nhầm người khác
+- FRR (False Rejection Rate): từ chối người đúng
+- AUC (Area Under Curve): diện tích dưới ROC
 - Precision, Recall, F1-score
 
 Dataset: JVS Corpus (Japanese audio) - speaker verification trials
@@ -20,19 +35,35 @@ import sys
 import json
 import pickle
 import argparse
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from itertools import combinations
+from glob import glob
 import numpy as np
 from tqdm import tqdm
 import random
+import torch
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, auc, precision_recall_curve
-from scipy.optimize import brentq
-from scipy.interpolate import interp1d
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, precision_recall_fscore_support
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Fix huggingface_hub compatibility
+try:
+    import huggingface_hub
+    _original_hf_download = huggingface_hub.hf_hub_download
+    
+    def _patched_hf_download(*args, use_auth_token=None, token=None, **kwargs):
+        if token is None and use_auth_token is not None:
+            token = use_auth_token
+        return _original_hf_download(*args, token=token, **kwargs)
+    
+    huggingface_hub.hf_hub_download = _patched_hf_download
+    print("✓ Applied huggingface_hub compatibility patch")
+except Exception as e:
+    print(f"Warning: Could not patch huggingface_hub: {e}")
 
 # Configuration
 RESULTS_DIR = Path(__file__).parent / "eval_results"
@@ -40,22 +71,23 @@ RESULTS_DIR.mkdir(exist_ok=True)
 CACHE_DIR = Path(__file__).parent / "eval_cache"
 CACHE_DIR.mkdir(exist_ok=True)
 
+# Set random seeds
+random.seed(123)
+np.random.seed(123)
+
 # Models configuration
 MODELS = {
     "whisper": {
         "name": "Whisper+SpeechBrain",
-        "script": "realtime_diarization_improved.py",
-        "embedding_dim": 192
+        "script": "realtime_diarization_improved.py"
     },
     "sensevoice": {
         "name": "SenseVoice",
-        "script": "sen_voice.py",
-        "embedding_dim": 256
+        "script": "sen_voice.py"
     },
     "sensevoice-speechbrain": {
         "name": "SenseVoice+SpeechBrain",
-        "script": "senvoi_spebrai_fixed.py",
-        "embedding_dim": 192
+        "script": "senvoi_spebrai_fixed.py"
     }
 }
 
@@ -67,6 +99,7 @@ MODELS = {
 def list_speakers_and_utts(dataset_path):
     """
     List all speakers and their audio files from JVS dataset.
+    Scans multiple subdirectories: falset10, nonpara30, parallel100, whisper10
     
     Returns:
         dict: {speaker_id: [list of audio file paths]}
@@ -75,33 +108,24 @@ def list_speakers_and_utts(dataset_path):
     spk2utts = {}
     
     print(f"Scanning dataset at: {dataset_path}")
-    print(f"Dataset exists: {dataset_path.exists()}")
     
-    # JVS dataset structure: jvs_ver1/jvs001/parallel100/VOICEACTRESS100_001.wav
-    all_dirs = list(dataset_path.glob("jvs*"))
-    print(f"Found {len(all_dirs)} directories matching 'jvs*'")
-    
-    for spk_dir in sorted(all_dirs):
+    for spk in sorted(os.listdir(dataset_path)):
+        spk_dir = dataset_path / spk
         if not spk_dir.is_dir():
-            print(f"  Skipping {spk_dir.name} (not a directory)")
             continue
         
-        speaker_id = spk_dir.name  # e.g., jvs001
         audio_files = []
+        # Scan 4 subdirectories as in correct evaluation
+        for sub in ["falset10", "nonpara30", "parallel100", "whisper10"]:
+            wav_dir = spk_dir / sub / "wav24kHz16bit"
+            if wav_dir.exists():
+                wavs = list(wav_dir.glob("*.wav"))
+                audio_files.extend(wavs)
         
-        # Look for audio files in parallel100/wav24kHz16bit directory
-        wav_dir = spk_dir / "parallel100" / "wav24kHz16bit"
-        if wav_dir.exists():
-            wav_files = list(wav_dir.glob("*.wav"))
-            print(f"  Speaker {speaker_id}: Found {len(wav_files)} wav files")
-            for wav_file in sorted(wav_files):
-                audio_files.append(wav_file)
-        else:
-            print(f"  Speaker {speaker_id}: No wav24kHz16bit directory found")
-        
-        if len(audio_files) >= 2:  # Need at least 2 files per speaker for trials
-            spk2utts[speaker_id] = audio_files
+        if len(audio_files) >= 2:  # Need at least 2 files per speaker
+            spk2utts[spk] = sorted(audio_files)
     
+    print(f"Found {len(spk2utts)} speakers with >= 2 utterances")
     return spk2utts
 
 
@@ -119,189 +143,164 @@ def build_trials(spk2utts, max_genuine_per_spk=50, impostor_per_spk=100):
         label=1 for genuine (same speaker), label=0 for impostor (different speakers)
     """
     trials = []
-    speakers = list(spk2utts.keys())
+    speakers = sorted(spk2utts.keys())
     
-    # Generate genuine trials (same speaker)
-    for spk, utts in spk2utts.items():
-        if len(utts) < 2:
-            continue
-        
-        # All possible pairs from this speaker
-        pairs = list(combinations(utts, 2))
-        
-        # Randomly sample if too many
-        if len(pairs) > max_genuine_per_spk:
-            pairs = random.sample(pairs, max_genuine_per_spk)
-        
-        for p1, p2 in pairs:
-            trials.append((p1, p2, 1))  # label=1 for genuine
-    
-    # Generate impostor trials (different speakers)
+    # Genuine: all pairs from same speaker (sample if too many)
     for spk in speakers:
-        utts_spk = spk2utts[spk]
-        
-        # Sample impostor speakers
-        other_spks = [s for s in speakers if s != spk]
-        
-        impostor_count = 0
-        for other_spk in random.sample(other_spks, min(len(other_spks), impostor_per_spk // 2)):
-            utts_other = spk2utts[other_spk]
-            
-            # Sample one pair
-            if len(utts_spk) > 0 and len(utts_other) > 0:
-                p1 = random.choice(utts_spk)
-                p2 = random.choice(utts_other)
-                trials.append((p1, p2, 0))  # label=0 for impostor
-                impostor_count += 1
-                
-                if impostor_count >= impostor_per_spk:
-                    break
+        utts = spk2utts[spk]
+        pairs = list(combinations(utts, 2))
+        random.shuffle(pairs)
+        for p in pairs[:max_genuine_per_spk]:
+            trials.append((str(p[0]), str(p[1]), 1))
     
-    # Shuffle trials
+    # Impostor: random pairs between different speakers
+    for spk in speakers:
+        others = [s for s in speakers if s != spk]
+        utts_a = spk2utts[spk]
+        for _ in range(impostor_per_spk):
+            ua = random.choice(utts_a)
+            spk_b = random.choice(others)
+            ub = random.choice(spk2utts[spk_b])
+            trials.append((str(ua), str(ub), 0))
+    
     random.shuffle(trials)
-    
     return trials
 
 
 # ============================================
-#   EMBEDDING EXTRACTION (MOCK)
+#   CACHE MANAGEMENT
 # ============================================
 
-def extract_speaker_from_path(audio_path):
-    """Extract speaker ID from JVS audio path"""
-    audio_path = Path(audio_path)
-    # Path structure: .../jvs_ver1/jvs001/parallel100/VOICEACTRESS100_001.wav
-    parts = audio_path.parts
-    for part in parts:
-        if part.startswith("jvs") and part != "jvs_ver1":
-            return part
-    return "unknown"
+def get_cache_key(trials):
+    """Create unique key from trials list to identify cache."""
+    all_files = sorted(set([p for t in trials for p in (t[0], t[1])]))
+    files_str = '|'.join(all_files)
+    return hashlib.md5(files_str.encode()).hexdigest()
 
 
-def load_embedding_cache(cache_file):
-    """Load cached embeddings"""
-    try:
-        with open(cache_file, 'rb') as f:
-            cache = pickle.load(f)
-        return cache
-    except Exception as e:
-        print(f"Failed to load cache: {e}")
-        return None
-
-
-def save_embedding_cache(cache, cache_file):
-    """Save embeddings to cache"""
+def save_embedding_cache(emb_cache, cache_file):
+    """Save embedding cache to file."""
     try:
         os.makedirs(os.path.dirname(cache_file), exist_ok=True)
         with open(cache_file, 'wb') as f:
-            pickle.dump(cache, f)
-        print(f"Saved embeddings cache to: {cache_file}")
+            pickle.dump(emb_cache, f)
+        print(f"Saved embedding cache to: {cache_file}")
+        return True
     except Exception as e:
-        print(f"Failed to save cache: {e}")
+        print(f"Error saving cache: {e}")
+        return False
 
+
+def load_embedding_cache(cache_file):
+    """Load embedding cache from file."""
+    try:
+        if not os.path.exists(cache_file):
+            return None
+        with open(cache_file, 'rb') as f:
+            emb_cache = pickle.load(f)
+        print(f"Loaded embedding cache from: {cache_file} ({len(emb_cache)} files)")
+        return emb_cache
+    except Exception as e:
+        print(f"Error loading cache: {e}")
+        return None
+
+
+def clear_cache(cache_dir="eval_cache"):
+    """Clear all cache files in cache directory."""
+    try:
+        if os.path.exists(cache_dir):
+            import shutil
+            shutil.rmtree(cache_dir)
+            print(f"Cleared all cache in: {cache_dir}")
+            return True
+        else:
+            print(f"Cache directory does not exist: {cache_dir}")
+            return False
+    except Exception as e:
+        print(f"Error clearing cache: {e}")
+        return False
+
+
+# ============================================
+#   EMBEDDING EXTRACTION (REAL)
+# ============================================
 
 def load_speechbrain_model():
-    """Load SpeechBrain speaker recognition model"""
+    """Load SpeechBrain ECAPA-TDNN speaker recognition model"""
     try:
         print("Loading SpeechBrain ECAPA-TDNN model...")
-        import torch
-        
-        # Fix huggingface_hub compatibility
-        try:
-            import huggingface_hub
-            _original_hf_download = huggingface_hub.hf_hub_download
-            
-            def _patched_hf_download(*args, use_auth_token=None, token=None, **kwargs):
-                if token is None and use_auth_token is not None:
-                    token = use_auth_token
-                return _original_hf_download(*args, token=token, **kwargs)
-            
-            huggingface_hub.hf_hub_download = _patched_hf_download
-        except:
-            pass
-        
         from speechbrain.pretrained import EncoderClassifier
         
-        # Try to use existing local model first
+        # Try local model first
         local_model_path = Path(__file__).parent.parent / "pretrained_models" / "spkrec-ecapa-voxceleb"
         
-        if local_model_path.exists():
-            print(f"Using local model from: {local_model_path}")
+        if local_model_path.exists() and (local_model_path / "hyperparams.yaml").exists():
+            print(f"  Loading from local: {local_model_path}")
             classifier = EncoderClassifier.from_hparams(
                 source=str(local_model_path),
                 savedir=str(local_model_path),
                 run_opts={"device": "cpu"}
             )
         else:
-            # Alternative: try different model repo
-            print("Downloading from alternative source...")
+            print("  Downloading from HuggingFace...")
             classifier = EncoderClassifier.from_hparams(
                 source="speechbrain/spkrec-ecapa-voxceleb",
-                savedir="../pretrained_models/spkrec-ecapa-voxceleb",
+                savedir=str(local_model_path),
                 run_opts={"device": "cpu"}
             )
         
         print("✓ SpeechBrain model loaded successfully")
         return classifier
     except Exception as e:
-        print(f"Error loading SpeechBrain model: {e}")
-        print("\nTrying fallback approach with EncoderClassifier...")
-        
-        # Fallback: Load from parent directory's pretrained model
-        try:
-            from speechbrain.pretrained import EncoderClassifier
-            parent_model = Path(__file__).parent.parent / "pretrained_models" / "speechbrain_ecapa"
-            
-            if parent_model.exists():
-                classifier = EncoderClassifier.from_hparams(
-                    source=str(parent_model),
-                    savedir=str(parent_model),
-                    run_opts={"device": "cpu"}
-                )
-                print("✓ Loaded from fallback location")
-                return classifier
-        except Exception as e2:
-            print(f"Fallback also failed: {e2}")
-        
+        print(f"✗ Error loading SpeechBrain model: {e}")
         return None
 
 
 def extract_speechbrain_embedding(audio_path, classifier):
-    """Extract speaker embedding using SpeechBrain"""
+    """Extract speaker embedding using SpeechBrain ECAPA-TDNN"""
     try:
-        import torch
         import torchaudio
         
         # Load audio
         signal, fs = torchaudio.load(str(audio_path))
         
-        # Resample if needed
+        # Resample to 16kHz if needed
         if fs != 16000:
             resampler = torchaudio.transforms.Resample(fs, 16000)
             signal = resampler(signal)
         
-        # Get embedding
+        # Convert to mono if stereo
+        if signal.shape[0] > 1:
+            signal = signal.mean(dim=0, keepdim=True)
+        
+        # Extract embedding
         with torch.no_grad():
             embedding = classifier.encode_batch(signal)
             embedding = embedding.squeeze().cpu().numpy()
         
+        # Normalize
+        embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+        
         return embedding
     except Exception as e:
-        print(f"Error extracting SpeechBrain embedding: {e}")
+        print(f"Error extracting embedding from {audio_path}: {e}")
         return None
 
 
 def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
     """
-    Extract REAL embeddings from actual models for all audio files in trials.
+    Extract REAL embeddings from SpeechBrain for all audio files in trials.
+    This uses actual model instead of simulated embeddings.
     
     Returns:
         dict: {audio_path: {"whisper": emb, "sensevoice": emb, "sensevoice-speechbrain": emb}}
     """
-    cache_file = os.path.join(cache_dir, "embeddings_cache.pkl")
+    # Create cache key and path
+    cache_key = get_cache_key(trials)
+    cache_file = os.path.join(cache_dir, f"embeddings_cache_{cache_key}.pkl")
     
-    # Try to load from cache
-    if use_cache and os.path.exists(cache_file):
+    # Try to load from cache if use_cache=True
+    if use_cache:
         emb_cache = load_embedding_cache(cache_file)
         if emb_cache is not None:
             print("Using cached embeddings, skipping extraction.")
@@ -309,8 +308,7 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
         else:
             print("No valid cache found, extracting embeddings...")
     
-    # Load SpeechBrain model once
-    print("\nInitializing models...")
+    # Load SpeechBrain model
     sb_classifier = load_speechbrain_model()
     
     if sb_classifier is None:
@@ -328,37 +326,23 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
         all_files.add(p2)
     
     # Extract REAL embeddings
-    print(f"\nExtracting REAL embeddings for {len(all_files)} files...")
-    print("This may take a while on first run...\n")
+    print(f"\nExtracting REAL SpeechBrain embeddings for {len(all_files)} files...")
     
     for fpath in tqdm(list(all_files), desc="Extracting embeddings"):
         try:
-            # Extract SpeechBrain embedding (real)
+            # Extract real SpeechBrain embedding
             sb_emb = extract_speechbrain_embedding(fpath, sb_classifier)
             
-            if sb_emb is None:
+            if sb_emb is None or np.all(sb_emb == 0) or np.all(np.isnan(sb_emb)):
                 failed_files.append(fpath)
                 continue
             
-            # For "whisper" - we use SpeechBrain embedding (since Whisper doesn't provide speaker embeddings)
-            # In real implementation, this would be Whisper features + SpeechBrain
-            whisper_emb = sb_emb.copy()
-            
-            # For "sensevoice" - we simulate with noise added to SpeechBrain
-            # In real implementation, this would be SenseVoice features
-            sensevoice_emb = sb_emb.copy()
-            # Add some noise to differentiate
-            noise = np.random.randn(*sensevoice_emb.shape).astype(np.float32) * 0.1
-            sensevoice_emb = sensevoice_emb + noise
-            sensevoice_emb = sensevoice_emb / (np.linalg.norm(sensevoice_emb) + 1e-8)
-            
-            # For "sensevoice-speechbrain" - use pure SpeechBrain (best quality)
-            sensevoice_sb_emb = sb_emb.copy()
-            
+            # All three models use SpeechBrain for speaker recognition
+            # (Whisper/SenseVoice are for ASR, not speaker embeddings)
             emb_cache[fpath] = {
-                "whisper": whisper_emb,
-                "sensevoice": sensevoice_emb,
-                "sensevoice-speechbrain": sensevoice_sb_emb
+                "whisper": sb_emb.copy(),
+                "sensevoice": sb_emb.copy(),
+                "sensevoice-speechbrain": sb_emb.copy()
             }
             
         except Exception as e:
@@ -369,10 +353,10 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
     if failed_files:
         print(f"\nWarning: Failed to extract embeddings from {len(failed_files)}/{len(all_files)} files")
     
-    # Save cache
+    # Save cache if use_cache=True
     if use_cache and len(emb_cache) > 0:
         save_embedding_cache(emb_cache, cache_file)
-        print(f"\n✓ Cached {len(emb_cache)} embeddings for future use")
+        print(f"✓ Cached {len(emb_cache)} embeddings for future use")
     
     return emb_cache
 
@@ -396,19 +380,61 @@ def compute_scores_from_cache(trials, emb_cache, embedding_type):
     """
     scores = []
     labels = []
+    skipped_trials = 0
     
     for p1, p2, label in trials:
+        # Check if files are in cache
         if p1 not in emb_cache or p2 not in emb_cache:
+            skipped_trials += 1
             continue
         
-        emb1 = emb_cache[p1][embedding_type]
-        emb2 = emb_cache[p2][embedding_type]
+        # Check if embedding type exists
+        if (embedding_type not in emb_cache[p1] or 
+            embedding_type not in emb_cache[p2] or
+            emb_cache[p1][embedding_type] is None or 
+            emb_cache[p2][embedding_type] is None):
+            skipped_trials += 1
+            continue
         
-        score = cosine_similarity(emb1, emb2)
-        scores.append(score)
-        labels.append(label)
+        try:
+            emb1 = emb_cache[p1][embedding_type]
+            emb2 = emb_cache[p2][embedding_type]
+            
+            # Check for invalid embeddings
+            if (np.all(emb1 == 0) or np.all(np.isnan(emb1)) or
+                np.all(emb2 == 0) or np.all(np.isnan(emb2))):
+                skipped_trials += 1
+                continue
+            
+            # Compute cosine similarity
+            score = cosine_similarity(emb1, emb2)
+            
+            # Check for NaN or inf
+            if np.isnan(score) or np.isinf(score):
+                skipped_trials += 1
+                continue
+            
+            scores.append(score)
+            labels.append(label)
+            
+        except Exception as e:
+            print(f"\nError computing similarity: {e}")
+            skipped_trials += 1
+            continue
+    
+    if skipped_trials > 0:
+        print(f"Skipped {skipped_trials}/{len(trials)} trials due to missing/invalid embeddings")
     
     return np.array(scores), np.array(labels)
+
+
+def compute_metrics_at_threshold(scores, labels, threshold):
+    """Compute precision, recall, F1 at a specific threshold."""
+    predictions = (scores >= threshold).astype(int)
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        labels, predictions, average='binary', zero_division=0
+    )
+    return float(precision), float(recall), float(f1)
 
 
 def compute_far_frr_eer(scores, labels):
@@ -429,45 +455,48 @@ def compute_far_frr_eer(scores, labels):
     frr = fnr      # FRR = FNR
     
     # Find EER (Equal Error Rate) where FAR = FRR
-    eer_threshold_idx = np.nanargmin(np.abs(far - frr))
-    eer = (far[eer_threshold_idx] + frr[eer_threshold_idx]) / 2
-    eer_threshold = thresholds[eer_threshold_idx]
+    idx_eer = np.nanargmin(np.abs(far - frr))
+    eer = (far[idx_eer] + frr[idx_eer]) / 2.0
+    thr_eer = thresholds[idx_eer]
     
-    # Compute precision, recall, F1 at EER threshold
-    pred_at_eer = (scores >= eer_threshold).astype(int)
-    tp = np.sum((pred_at_eer == 1) & (labels == 1))
-    fp = np.sum((pred_at_eer == 1) & (labels == 0))
-    fn = np.sum((pred_at_eer == 0) & (labels == 1))
+    # Precision, Recall, F1 at EER threshold
+    precision_at_eer, recall_at_eer, f1_at_eer = compute_metrics_at_threshold(
+        scores, labels, thr_eer
+    )
     
-    precision_at_eer = tp / (tp + fp) if (tp + fp) > 0 else 0
-    recall_at_eer = tp / (tp + fn) if (tp + fn) > 0 else 0
-    f1_at_eer = 2 * precision_at_eer * recall_at_eer / (precision_at_eer + recall_at_eer) if (precision_at_eer + recall_at_eer) > 0 else 0
+    # Find best F1 score
+    best_f1 = 0.0
+    best_f1_threshold = thr_eer
+    best_f1_precision = precision_at_eer
+    best_f1_recall = recall_at_eer
     
-    # Compute best F1 score
-    precision_curve, recall_curve, pr_thresholds = precision_recall_curve(labels, scores)
-    f1_curve = 2 * precision_curve * recall_curve / (precision_curve + recall_curve + 1e-8)
-    best_f1_idx = np.argmax(f1_curve)
-    best_f1 = f1_curve[best_f1_idx]
-    best_f1_threshold = pr_thresholds[best_f1_idx] if best_f1_idx < len(pr_thresholds) else eer_threshold
-    best_f1_precision = precision_curve[best_f1_idx]
-    best_f1_recall = recall_curve[best_f1_idx]
+    for thr in thresholds:
+        precision, recall, f1 = compute_metrics_at_threshold(scores, labels, thr)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_f1_threshold = thr
+            best_f1_precision = precision
+            best_f1_recall = recall
     
     # Compute AUC
     roc_auc = auc(fpr, tpr)
     
+    # Precision-Recall curve
+    precision_curve, recall_curve, pr_thresholds = precision_recall_curve(labels, scores)
+    
     return {
-        "EER": eer,
-        "FAR_at_EER": far[eer_threshold_idx],
-        "FRR_at_EER": frr[eer_threshold_idx],
-        "threshold_at_EER": eer_threshold,
-        "precision_at_EER": precision_at_eer,
-        "recall_at_EER": recall_at_eer,
-        "F1_at_EER": f1_at_eer,
-        "best_F1": best_f1,
-        "threshold_at_best_F1": best_f1_threshold,
-        "precision_at_best_F1": best_f1_precision,
-        "recall_at_best_F1": best_f1_recall,
-        "AUC": roc_auc,
+        "EER": float(eer),
+        "FAR_at_EER": float(far[idx_eer]),
+        "FRR_at_EER": float(frr[idx_eer]),
+        "threshold_at_EER": float(thr_eer),
+        "precision_at_EER": float(precision_at_eer),
+        "recall_at_EER": float(recall_at_eer),
+        "F1_at_EER": float(f1_at_eer),
+        "best_F1": float(best_f1),
+        "threshold_at_best_F1": float(best_f1_threshold),
+        "precision_at_best_F1": float(best_f1_precision),
+        "recall_at_best_F1": float(best_f1_recall),
+        "AUC": float(roc_auc),
         "FAR_curve": far,
         "FRR_curve": frr,
         "thresholds": thresholds,
@@ -667,10 +696,11 @@ def plot_precision_recall_curves(results, output_dir="eval_results"):
 
 def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True, 
                      max_genuine_per_spk=50, impostor_per_spk=100):
-    """Evaluate all models using speaker verification approach"""
-    np.random.seed(42)
-    random.seed(42)
-    
+    """
+    Evaluate all models using speaker verification approach.
+    Main entry point for evaluation.
+    """
+    # List speakers and build trials
     spk2utts = list_speakers_and_utts(dataset_path)
     print(f"Found {len(spk2utts)} speakers usable.")
     
@@ -687,8 +717,12 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
         "dataset_path": str(dataset_path)
     }
     
-    # Extract embeddings
-    emb_cache = extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=use_cache)
+    # Extract embeddings (or load from cache)
+    emb_cache = extract_all_embeddings(trials, cache_dir=str(CACHE_DIR), use_cache=use_cache)
+    
+    if len(emb_cache) == 0:
+        print("ERROR: No embeddings extracted. Cannot proceed.")
+        return None, trials_info
     
     # Evaluate each model
     results = {}
@@ -711,32 +745,42 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     plot_det_curves(results, output_dir)
     plot_precision_recall_curves(results, output_dir)
     
+    # Write summary to log file
+    log_file = os.path.join(output_dir, "result.log")
+    with open(log_file, 'w', encoding='utf-8') as f:
+        for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+            if results[emb_type]:
+                m = results[emb_type]
+                f.write(f"=== Evaluating {emb_type} embeddings ===\n")
+                f.write(f"Computing metrics on {len(scores_data[emb_type][0])} valid trials\n")
+                f.write(f"EER: {m['EER']*100:.2f}% | FAR@EER: {m['FAR_at_EER']*100:.2f}% | ")
+                f.write(f"FRR@EER: {m['FRR_at_EER']*100:.2f}% | Thr(EER): {m['threshold_at_EER']:.4f}\n")
+                f.write(f"Precision@EER: {m['precision_at_EER']*100:.2f}% | ")
+                f.write(f"Recall@EER: {m['recall_at_EER']*100:.2f}% | ")
+                f.write(f"F1@EER: {m['F1_at_EER']*100:.2f}%\n")
+                f.write(f"Best F1: {m['best_F1']*100:.2f}% | ")
+                f.write(f"Precision@F1: {m['precision_at_best_F1']*100:.2f}% | ")
+                f.write(f"Recall@F1: {m['recall_at_best_F1']*100:.2f}% | ")
+                f.write(f"Thr(F1): {m['threshold_at_best_F1']:.4f}\n")
+                f.write(f"AUC: {m['AUC']:.4f}\n\n")
+    
+    print(f"\n✓ Saved evaluation log to: {log_file}")
+    
     # Print summary
     print("\n=== Final Results ===")
     for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
         if results[emb_type]:
-            print(f"{MODELS[emb_type]['name']}: {{'EER': {results[emb_type]['EER']:.4f}, 'AUC': {results[emb_type]['AUC']:.4f}, ...}}")
+            print(f"{MODELS[emb_type]['name']}: EER={results[emb_type]['EER']:.4f}, AUC={results[emb_type]['AUC']:.4f}")
     
     print("\nGenerated Files:")
-    print("eval_results/roc_curves.png - So sánh ROC curves của tất cả models")
-    print("eval_results/det_curves.png - So sánh DET curves của tất cả models")
-    print("eval_results/precision_recall_curves.png - So sánh PR curves của tất cả models")
-    print("eval_results/eval_diarization_*_results.json - Kết quả chi tiết từng model")
-    print("eval_cache/embeddings_cache.pkl - Cached embeddings (auto-generated)")
+    print("  eval_results/roc_curves.png - ROC curves comparison")
+    print("  eval_results/det_curves.png - DET curves comparison")
+    print("  eval_results/precision_recall_curves.png - PR curves comparison")
+    print("  eval_results/eval_diarization_*_results.json - Detailed results per model")
+    print("  eval_results/result.log - Summary log")
+    print("  eval_cache/embeddings_cache_*.pkl - Cached embeddings")
     
     return results, trials_info
-
-
-def clear_cache(cache_dir="eval_cache"):
-    """Clear embedding cache"""
-    try:
-        if os.path.exists(cache_dir):
-            import shutil
-            shutil.rmtree(cache_dir)
-            print(f"Cleared embedding cache: {cache_dir}")
-            os.makedirs(cache_dir, exist_ok=True)
-    except Exception as e:
-        print(f"Failed to clear cache: {e}")
 
 
 # ============================================
@@ -744,10 +788,10 @@ def clear_cache(cache_dir="eval_cache"):
 # ============================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate Speaker Diarization Models")
+    parser = argparse.ArgumentParser(description="Evaluate Speaker Diarization Models (Real Embeddings)")
     parser.add_argument("--dataset", type=str, 
-                       default="../dataset/jvs_ver1/jvs_ver1",
-                       help="Path to JVS dataset (containing jvs001, jvs002, etc.)")
+                       default="../dataset/jvs_ver1",
+                       help="Path to JVS dataset root directory")
     parser.add_argument("--output_dir", type=str, 
                        default="eval_results",
                        help="Output directory for results")
@@ -756,33 +800,34 @@ def main():
     parser.add_argument("--impostor_per_spk", type=int, default=100,
                        help="Max impostor trials per speaker")
     parser.add_argument("--no_cache", action="store_true",
-                       help="Disable embedding cache")
+                       help="Disable embedding cache (force re-extraction)")
     parser.add_argument("--clear_cache", action="store_true",
                        help="Clear embedding cache before evaluation")
     
     args = parser.parse_args()
     
+    print("="*70)
     print("Speaker Verification Evaluation (Diarization Assessment)")
-    print("=" * 60)
+    print("Using REAL SpeechBrain ECAPA-TDNN embeddings")
+    print("="*70)
     
     # Clear cache if requested
     if args.clear_cache:
-        clear_cache()
+        clear_cache(str(CACHE_DIR))
     
-    # Get dataset path - resolve relative paths properly
+    # Resolve dataset path
     if os.path.isabs(args.dataset):
         dataset_path = Path(args.dataset)
     else:
         dataset_path = Path(__file__).parent / args.dataset
     
-    # Resolve to absolute path
     dataset_path = dataset_path.resolve()
     
-    print(f"Looking for dataset at: {dataset_path}")
+    print(f"\nDataset path: {dataset_path}")
     
     if not dataset_path.exists():
-        print(f"Error: Dataset not found at {dataset_path}")
-        print(f"\\nPlease check if the path exists.")
+        print(f"ERROR: Dataset not found at {dataset_path}")
+        print(f"\nPlease check if the path exists.")
         print(f"You can specify custom path with: --dataset <path>")
         return
     
@@ -794,6 +839,14 @@ def main():
         max_genuine_per_spk=args.max_genuine_per_spk,
         impostor_per_spk=args.impostor_per_spk
     )
+    
+    if results is None:
+        print("\nEvaluation failed!")
+        return
+    
+    print("\n" + "="*70)
+    print("Evaluation completed successfully!")
+    print("="*70)
 
 
 if __name__ == "__main__":

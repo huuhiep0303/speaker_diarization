@@ -8,3 +8,4 @@ pretrained_models/
 tmp_model/
 */__pycache__/
 *.pyc
+*.json
