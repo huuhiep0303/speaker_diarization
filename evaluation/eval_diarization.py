@@ -108,10 +108,31 @@ def list_speakers_and_utts(dataset_path):
     spk2utts = {}
     
     print(f"Scanning dataset at: {dataset_path}")
+    print(f"Dataset exists: {dataset_path.exists()}")
+    
+    if not dataset_path.exists():
+        print(f"ERROR: Dataset path does not exist!")
+        return spk2utts
+    
+    # List all items in dataset directory
+    try:
+        all_items = list(dataset_path.iterdir())
+        print(f"Found {len(all_items)} items in dataset directory")
+        
+        # Show first few items for debugging
+        if all_items:
+            print(f"Sample items: {[item.name for item in all_items[:5]]}")
+    except Exception as e:
+        print(f"Error listing dataset directory: {e}")
+        return spk2utts
     
     for spk in sorted(os.listdir(dataset_path)):
         spk_dir = dataset_path / spk
         if not spk_dir.is_dir():
+            continue
+        
+        # Skip if not a speaker directory (should start with 'jvs')
+        if not spk.startswith('jvs'):
             continue
         
         audio_files = []
@@ -121,11 +142,20 @@ def list_speakers_and_utts(dataset_path):
             if wav_dir.exists():
                 wavs = list(wav_dir.glob("*.wav"))
                 audio_files.extend(wavs)
+                if len(wavs) > 0:
+                    print(f"  Speaker {spk}/{sub}: Found {len(wavs)} wav files")
         
         if len(audio_files) >= 2:  # Need at least 2 files per speaker
             spk2utts[spk] = sorted(audio_files)
+            print(f"  ✓ Speaker {spk}: Total {len(audio_files)} files")
     
-    print(f"Found {len(spk2utts)} speakers with >= 2 utterances")
+    print(f"\nFound {len(spk2utts)} speakers with >= 2 utterances")
+    if len(spk2utts) == 0:
+        print("\nWARNING: No valid speakers found!")
+        print("Please check:")
+        print("  1. Dataset path is correct")
+        print("  2. Directory structure: dataset/jvsXXX/parallel100/wav24kHz16bit/*.wav")
+        print("  3. Audio files exist in the subdirectories")
     return spk2utts
 
 
@@ -790,7 +820,7 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Speaker Diarization Models (Real Embeddings)")
     parser.add_argument("--dataset", type=str, 
-                       default="../dataset/jvs_ver1",
+                       default="../../dataset/jvs_ver1",
                        help="Path to JVS dataset root directory")
     parser.add_argument("--output_dir", type=str, 
                        default="eval_results",
@@ -815,7 +845,7 @@ def main():
     if args.clear_cache:
         clear_cache(str(CACHE_DIR))
     
-    # Resolve dataset path
+    # Resolve dataset path - try multiple common locations
     if os.path.isabs(args.dataset):
         dataset_path = Path(args.dataset)
     else:
@@ -823,13 +853,37 @@ def main():
     
     dataset_path = dataset_path.resolve()
     
-    print(f"\nDataset path: {dataset_path}")
+    print(f"\nLooking for dataset at: {dataset_path}")
     
     if not dataset_path.exists():
-        print(f"ERROR: Dataset not found at {dataset_path}")
-        print(f"\nPlease check if the path exists.")
-        print(f"You can specify custom path with: --dataset <path>")
-        return
+        print(f"✗ Dataset not found at: {dataset_path}")
+        
+        # Try alternative paths
+        alt_paths = [
+            Path(__file__).parent.parent.parent / "dataset" / "jvs_ver1",
+            Path(__file__).parent.parent / "dataset" / "jvs_ver1",
+            Path(__file__).parent / "dataset" / "jvs_ver1",
+        ]
+        
+        print("\nTrying alternative paths:")
+        for alt_path in alt_paths:
+            print(f"  Checking: {alt_path}")
+            if alt_path.exists():
+                dataset_path = alt_path
+                print(f"  ✓ Found dataset at: {dataset_path}")
+                break
+        else:
+            print(f"\nERROR: Dataset not found in any common location!")
+            print(f"\nPlease:")
+            print(f"  1. Download JVS dataset from: https://sites.google.com/site/shinnosuketakamichi/research-topics/jvs_corpus")
+            print(f"  2. Extract to one of these locations:")
+            for alt_path in alt_paths:
+                print(f"     - {alt_path}")
+            print(f"  3. Or specify custom path with: --dataset <path>")
+            print(f"\nExpected structure: dataset/jvs_ver1/jvs001/parallel100/wav24kHz16bit/*.wav")
+            return
+    
+    print(f"✓ Using dataset at: {dataset_path}")
     
     # Run evaluation
     results, trials_info = evaluate_dataset(
