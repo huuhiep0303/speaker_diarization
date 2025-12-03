@@ -9,3 +9,5 @@ tmp_model/
 */__pycache__/
 *.pyc
 *.json
+*.yaml
+diar_output/
