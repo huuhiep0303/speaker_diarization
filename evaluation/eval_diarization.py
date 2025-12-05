@@ -76,18 +76,19 @@ random.seed(123)
 np.random.seed(123)
 
 # Models configuration
+# NOTE: whisper, sensevoice, sensevoice-speechbrain all use SpeechBrain ECAPA-TDNN
+# for speaker embeddings, so they will have IDENTICAL results. Only NeMo uses
+# a different speaker embedding model (TitaNet Large).
 MODELS = {
-    "whisper": {
-        "name": "Whisper+SpeechBrain",
-        "script": "realtime_diarization_improved.py"
+    "speechbrain": {
+        "name": "SpeechBrain ECAPA-TDNN",
+        "script": "realtime_diarization_improved.py",
+        "note": "Used by Whisper, SenseVoice, SenseVoice+SpeechBrain"
     },
-    "sensevoice": {
-        "name": "SenseVoice",
-        "script": "sen_voice.py"
-    },
-    "sensevoice-speechbrain": {
-        "name": "SenseVoice+SpeechBrain",
-        "script": "senvoi_spebrai_fixed.py"
+    "nemo": {
+        "name": "NeMo TitaNet Large",
+        "script": "main_nemo.py",
+        "note": "Different architecture from SpeechBrain"
     }
 }
 
@@ -96,10 +97,14 @@ MODELS = {
 #   DATASET FUNCTIONS
 # ============================================
 
-def list_speakers_and_utts(dataset_path):
+def list_speakers_and_utts(dataset_path, max_speakers=None):
     """
     List all speakers and their audio files from JVS dataset.
     Scans multiple subdirectories: falset10, nonpara30, parallel100, whisper10
+    
+    Args:
+        dataset_path: Path to dataset root directory
+        max_speakers: Maximum number of speakers to use (e.g., 50 for jvs001-jvs050)
     
     Returns:
         dict: {speaker_id: [list of audio file paths]}
@@ -108,6 +113,8 @@ def list_speakers_and_utts(dataset_path):
     spk2utts = {}
     
     print(f"Scanning dataset at: {dataset_path}")
+    if max_speakers:
+        print(f"Limiting to first {max_speakers} speakers")
     print(f"Dataset exists: {dataset_path.exists()}")
     
     if not dataset_path.exists():
@@ -126,6 +133,7 @@ def list_speakers_and_utts(dataset_path):
         print(f"Error listing dataset directory: {e}")
         return spk2utts
     
+    speaker_count = 0
     for spk in sorted(os.listdir(dataset_path)):
         spk_dir = dataset_path / spk
         if not spk_dir.is_dir():
@@ -134,6 +142,10 @@ def list_speakers_and_utts(dataset_path):
         # Skip if not a speaker directory (should start with 'jvs')
         if not spk.startswith('jvs'):
             continue
+        
+        # Check max_speakers limit
+        if max_speakers and speaker_count >= max_speakers:
+            break
         
         audio_files = []
         # Scan 4 subdirectories as in correct evaluation
@@ -148,6 +160,7 @@ def list_speakers_and_utts(dataset_path):
         if len(audio_files) >= 2:  # Need at least 2 files per speaker
             spk2utts[spk] = sorted(audio_files)
             print(f"  ✓ Speaker {spk}: Total {len(audio_files)} files")
+            speaker_count += 1
     
     print(f"\nFound {len(spk2utts)} speakers with >= 2 utterances")
     if len(spk2utts) == 0:
@@ -317,76 +330,167 @@ def extract_speechbrain_embedding(audio_path, classifier):
         return None
 
 
+def load_nemo_model():
+    """Load NeMo TitaNet Large speaker recognition model"""
+    try:
+        print("Loading NeMo TitaNet Large model...")
+        from nemo.collections.asr.models.label_models import EncDecSpeakerLabelModel
+        
+        # Load TitaNet Large model
+        speaker_model = EncDecSpeakerLabelModel.from_pretrained(
+            model_name="titanet_large"
+        )
+        speaker_model.freeze()
+        speaker_model.eval()
+        
+        # Move to CPU for evaluation
+        device = "cpu"
+        speaker_model.to(device)
+        
+        print("✓ NeMo model loaded successfully")
+        return speaker_model
+    except Exception as e:
+        print(f"✗ Error loading NeMo model: {e}")
+        return None
+
+
+def extract_nemo_embedding(audio_path, speaker_model):
+    """Extract speaker embedding using NeMo TitaNet Large"""
+    try:
+        import soundfile as sf
+        
+        # Load audio
+        audio, sr = sf.read(str(audio_path))
+        
+        # Convert to mono if stereo
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+        
+        # Resample to 16kHz if needed
+        if sr != 16000:
+            import librosa
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+        
+        # Prepare input
+        audio_length = len(audio)
+        device = next(speaker_model.parameters()).device
+        audio_signal = torch.tensor(audio, device=device, dtype=torch.float32).unsqueeze(0)
+        audio_signal_len = torch.tensor([audio_length], device=device)
+        
+        # Extract embedding
+        with torch.no_grad():
+            _, emb = speaker_model.forward(audio_signal, audio_signal_len)
+            # emb shape: (batch, time, embedding_dim) -> squeeze to (embedding_dim,)
+            emb = emb.squeeze(0).detach().cpu().numpy()
+        
+        # Normalize
+        emb = emb / (np.linalg.norm(emb) + 1e-8)
+        
+        return emb
+    except Exception as e:
+        print(f"Error extracting NeMo embedding from {audio_path}: {e}")
+        return None
+
+
 def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
     """
-    Extract REAL embeddings from SpeechBrain for all audio files in trials.
-    This uses actual model instead of simulated embeddings.
+    Extract embeddings for all files in trials using SpeechBrain and NeMo.
+    Cache results to avoid re-extraction.
     
     Returns:
-        dict: {audio_path: {"whisper": emb, "sensevoice": emb, "sensevoice-speechbrain": emb}}
+        dict: {file_path: {'speechbrain': emb, 'nemo': emb}}
     """
-    # Create cache key and path
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Get unique files
+    all_files = sorted(set([t[0] for t in trials] + [t[1] for t in trials]))
+    print(f"\nTotal unique audio files: {len(all_files)}")
+    
+    # Create cache key
     cache_key = get_cache_key(trials)
     cache_file = os.path.join(cache_dir, f"embeddings_cache_{cache_key}.pkl")
     
-    # Try to load from cache if use_cache=True
+    # Try to load from cache
     if use_cache:
         emb_cache = load_embedding_cache(cache_file)
         if emb_cache is not None:
-            print("Using cached embeddings, skipping extraction.")
-            return emb_cache
+            # Migrate old cache format to new format
+            # Old: {file: {'whisper': emb, 'sensevoice': emb, ...}}
+            # New: {file: {'speechbrain': emb, 'nemo': emb}}
+            migrated = False
+            for file_path in list(emb_cache.keys()):
+                if isinstance(emb_cache[file_path], dict):
+                    # Check if old format (has whisper/sensevoice keys)
+                    if 'whisper' in emb_cache[file_path] or 'sensevoice' in emb_cache[file_path]:
+                        # Migrate: use whisper/sensevoice/sensevoice-speechbrain embedding as speechbrain
+                        if 'speechbrain' not in emb_cache[file_path]:
+                            # Try to find any SpeechBrain embedding from old keys
+                            for old_key in ['whisper', 'sensevoice', 'sensevoice-speechbrain']:
+                                if old_key in emb_cache[file_path] and emb_cache[file_path][old_key] is not None:
+                                    emb_cache[file_path]['speechbrain'] = emb_cache[file_path][old_key]
+                                    migrated = True
+                                    break
+            
+            if migrated:
+                print("✓ Migrated old cache format to new format (whisper/sensevoice → speechbrain)")
+                # Save migrated cache
+                save_embedding_cache(emb_cache, cache_file)
+            
+            # Check if all files are in cache with both embedding types
+            missing_files = [f for f in all_files if f not in emb_cache or 
+                           'speechbrain' not in emb_cache[f] or 
+                           'nemo' not in emb_cache[f]]
+            if len(missing_files) == 0:
+                print("✓ All embeddings found in cache!")
+                return emb_cache
+            else:
+                print(f"Cache incomplete: {len(missing_files)} files need embedding extraction")
+                print(f"⚠️  Tip: Run with --clear_cache to start fresh and extract all embeddings")
         else:
-            print("No valid cache found, extracting embeddings...")
+            emb_cache = {}
+    else:
+        emb_cache = {}
     
-    # Load SpeechBrain model
-    sb_classifier = load_speechbrain_model()
+    # Load models
+    print("\nLoading embedding models...")
+    print("Note: This will extract embeddings for files not in cache")
+    print("      To force re-extraction, use --clear_cache flag\n")
     
-    if sb_classifier is None:
-        print("ERROR: Failed to load SpeechBrain model. Cannot proceed.")
-        print("Please ensure speechbrain is installed: pip install speechbrain")
+    speechbrain_model = load_speechbrain_model()
+    nemo_model = load_nemo_model()
+    
+    if speechbrain_model is None:
+        print("ERROR: Failed to load SpeechBrain model")
         return {}
     
-    emb_cache = {}
-    failed_files = []
+    if nemo_model is None:
+        print("WARNING: Failed to load NeMo model, will only extract SpeechBrain embeddings")
     
-    # Get unique files from trials
-    all_files = set()
-    for p1, p2, _ in trials:
-        all_files.add(p1)
-        all_files.add(p2)
-    
-    # Extract REAL embeddings
-    print(f"\nExtracting REAL SpeechBrain embeddings for {len(all_files)} files...")
-    
-    for fpath in tqdm(list(all_files), desc="Extracting embeddings"):
-        try:
-            # Extract real SpeechBrain embedding
-            sb_emb = extract_speechbrain_embedding(fpath, sb_classifier)
-            
-            if sb_emb is None or np.all(sb_emb == 0) or np.all(np.isnan(sb_emb)):
-                failed_files.append(fpath)
-                continue
-            
-            # All three models use SpeechBrain for speaker recognition
-            # (Whisper/SenseVoice are for ASR, not speaker embeddings)
-            emb_cache[fpath] = {
-                "whisper": sb_emb.copy(),
-                "sensevoice": sb_emb.copy(),
-                "sensevoice-speechbrain": sb_emb.copy()
-            }
-            
-        except Exception as e:
-            print(f"\nError extracting embeddings from {fpath}: {e}")
-            failed_files.append(fpath)
+    # Extract embeddings
+    print(f"\nExtracting embeddings for {len(all_files)} files...")
+    for file_path in tqdm(all_files, desc="Extracting embeddings"):
+        if not os.path.exists(file_path):
+            print(f"\nWarning: File not found: {file_path}")
             continue
+        
+        # Initialize cache entry
+        if file_path not in emb_cache:
+            emb_cache[file_path] = {}
+        
+        # Extract SpeechBrain embedding if not cached
+        if 'speechbrain' not in emb_cache[file_path]:
+            sb_emb = extract_speechbrain_embedding(file_path, speechbrain_model)
+            if sb_emb is not None:
+                emb_cache[file_path]['speechbrain'] = sb_emb
+        
+        # Extract NeMo embedding if not cached
+        if nemo_model is not None and 'nemo' not in emb_cache[file_path]:
+            nemo_emb = extract_nemo_embedding(file_path, nemo_model)
+            if nemo_emb is not None:
+                emb_cache[file_path]['nemo'] = nemo_emb
     
-    if failed_files:
-        print(f"\nWarning: Failed to extract embeddings from {len(failed_files)}/{len(all_files)} files")
-    
-    # Save cache if use_cache=True
-    if use_cache and len(emb_cache) > 0:
-        save_embedding_cache(emb_cache, cache_file)
-        print(f"✓ Cached {len(emb_cache)} embeddings for future use")
+    # Save cache
+    save_embedding_cache(emb_cache, cache_file)
     
     return emb_cache
 
@@ -582,8 +686,20 @@ def save_evaluation_results(model_name, metrics, trials_info, output_dir="eval_r
 
 
 def evaluate_embedding_type(embedding_type, trials, emb_cache, trials_info, output_dir="eval_results"):
-    """Evaluate a single embedding type on verification trials"""
+    """
+    Evaluate a specific embedding type (speechbrain/nemo)
+    
+    - speechbrain: SpeechBrain ECAPA-TDNN (used by Whisper, SenseVoice models)
+    - nemo: NeMo TitaNet Large embeddings
+    """
     print(f"\n=== Evaluating {embedding_type} embeddings ===")
+    
+    # Validate embedding type
+    if embedding_type not in ['speechbrain', 'nemo']:
+        print(f"ERROR: Unknown embedding type: {embedding_type}")
+        print("Valid types: speechbrain, nemo")
+        return None
+    
     scores, labels = compute_scores_from_cache(trials, emb_cache, embedding_type)
     
     if len(scores) == 0:
@@ -617,9 +733,12 @@ def plot_roc_curves(results, output_dir="eval_results"):
     
     plt.figure(figsize=(10, 8))
     
-    colors = {"whisper": "blue", "sensevoice": "red", "sensevoice-speechbrain": "green"}
+    colors = {
+        "speechbrain": "blue",
+        "nemo": "red"
+    }
     
-    for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+    for emb_type in ["speechbrain", "nemo"]:
         if results[emb_type] is None:
             continue
             
@@ -654,9 +773,12 @@ def plot_det_curves(results, output_dir="eval_results"):
     
     plt.figure(figsize=(10, 8))
     
-    colors = {"whisper": "blue", "sensevoice": "red", "sensevoice-speechbrain": "green"}
+    colors = {
+        "speechbrain": "blue",
+        "nemo": "red"
+    }
     
-    for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+    for emb_type in ["speechbrain", "nemo"]:
         if results[emb_type] is None:
             continue
             
@@ -695,9 +817,12 @@ def plot_precision_recall_curves(results, output_dir="eval_results"):
     
     plt.figure(figsize=(10, 8))
     
-    colors = {"whisper": "blue", "sensevoice": "red", "sensevoice-speechbrain": "green"}
+    colors = {
+        "speechbrain": "blue",
+        "nemo": "red"
+    }
     
-    for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+    for emb_type in ["speechbrain", "nemo"]:
         if results[emb_type] is None:
             continue
             
@@ -725,13 +850,21 @@ def plot_precision_recall_curves(results, output_dir="eval_results"):
 
 
 def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True, 
-                     max_genuine_per_spk=50, impostor_per_spk=100):
+                     max_genuine_per_spk=50, impostor_per_spk=100, max_speakers=None):
     """
     Evaluate all models using speaker verification approach.
     Main entry point for evaluation.
+    
+    Args:
+        dataset_path: Path to dataset root directory
+        output_dir: Output directory for results
+        use_cache: Whether to use cached embeddings
+        max_genuine_per_spk: Max genuine trials per speaker
+        impostor_per_spk: Max impostor trials per speaker
+        max_speakers: Maximum number of speakers to use (e.g., 50 for jvs001-jvs050)
     """
     # List speakers and build trials
-    spk2utts = list_speakers_and_utts(dataset_path)
+    spk2utts = list_speakers_and_utts(dataset_path, max_speakers=max_speakers)
     print(f"Found {len(spk2utts)} speakers usable.")
     
     trials = build_trials(spk2utts, max_genuine_per_spk, impostor_per_spk)
@@ -758,7 +891,13 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     results = {}
     scores_data = {}
     
-    for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+    print("\n" + "="*70)
+    print("NOTE: Only evaluating 2 models:")
+    print("  1. SpeechBrain ECAPA-TDNN (used by Whisper/SenseVoice models)")
+    print("  2. NeMo TitaNet Large (different architecture)")
+    print("="*70 + "\n")
+    
+    for emb_type in ["speechbrain", "nemo"]:
         result = evaluate_embedding_type(emb_type, trials, emb_cache, trials_info, output_dir)
         
         if result is None:
@@ -778,7 +917,12 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     # Write summary to log file
     log_file = os.path.join(output_dir, "result.log")
     with open(log_file, 'w', encoding='utf-8') as f:
-        for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+        f.write("="*70 + "\n")
+        f.write("Speaker Embedding Comparison\n")
+        f.write("NOTE: SpeechBrain used by Whisper/SenseVoice/SenseVoice+SpeechBrain\n")
+        f.write("="*70 + "\n\n")
+        
+        for emb_type in ["speechbrain", "nemo"]:
             if results[emb_type]:
                 m = results[emb_type]
                 f.write(f"=== Evaluating {emb_type} embeddings ===\n")
@@ -798,9 +942,12 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     
     # Print summary
     print("\n=== Final Results ===")
-    for emb_type in ["whisper", "sensevoice", "sensevoice-speechbrain"]:
+    for emb_type in ["speechbrain", "nemo"]:
         if results[emb_type]:
-            print(f"{MODELS[emb_type]['name']}: EER={results[emb_type]['EER']:.4f}, AUC={results[emb_type]['AUC']:.4f}")
+            model_info = MODELS[emb_type]['name']
+            if 'note' in MODELS[emb_type]:
+                model_info += f" ({MODELS[emb_type]['note']})"
+            print(f"{model_info}: EER={results[emb_type]['EER']:.4f}, AUC={results[emb_type]['AUC']:.4f}")
     
     print("\nGenerated Files:")
     print("  eval_results/roc_curves.png - ROC curves comparison")
@@ -820,7 +967,7 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Speaker Diarization Models (Real Embeddings)")
     parser.add_argument("--dataset", type=str, 
-                       default="../../dataset/jvs_ver1",
+                       default="../dataset/jvs_ver1/jvs_ver1",
                        help="Path to JVS dataset root directory")
     parser.add_argument("--output_dir", type=str, 
                        default="eval_results",
@@ -833,12 +980,21 @@ def main():
                        help="Disable embedding cache (force re-extraction)")
     parser.add_argument("--clear_cache", action="store_true",
                        help="Clear embedding cache before evaluation")
+    parser.add_argument("--max_speakers", type=int, default=None,
+                       help="Maximum number of speakers to use (e.g., 50 for jvs001-jvs050)")
     
     args = parser.parse_args()
     
     print("="*70)
-    print("Speaker Verification Evaluation (Diarization Assessment)")
-    print("Using REAL SpeechBrain ECAPA-TDNN embeddings")
+    print("Speaker Verification Evaluation")
+    print("="*70)
+    print("Evaluating 2 embedding models:")
+    print("  1. SpeechBrain ECAPA-TDNN (used by Whisper/SenseVoice)")
+    print("  2. NeMo TitaNet Large")
+    if args.max_speakers:
+        print(f"\n📊 Limiting to first {args.max_speakers} speakers")
+    if args.clear_cache:
+        print("\n⚠️  Cache will be cleared and embeddings re-extracted")
     print("="*70)
     
     # Clear cache if requested
@@ -891,7 +1047,8 @@ def main():
         output_dir=args.output_dir, 
         use_cache=not args.no_cache,
         max_genuine_per_spk=args.max_genuine_per_spk,
-        impostor_per_spk=args.impostor_per_spk
+        impostor_per_spk=args.impostor_per_spk,
+        max_speakers=args.max_speakers
     )
     
     if results is None:

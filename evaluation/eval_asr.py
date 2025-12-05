@@ -4,6 +4,7 @@ Evaluation script for ASR/Transcription Quality
 - realtime_diarization_improved.py (Whisper)
 - sen_voice.py (SenseVoice) 
 - senvoi_spebrai_fixed.py (SenseVoice + SpeechBrain)
+- main_nemo.py (NeMo + Whisper)
 
 Metrics:
 - WER (Word Error Rate) - cho tiếng Nhật sử dụng Sudachi tokenizer
@@ -265,6 +266,76 @@ class SenseVoiceASR(BaseASR):
             return ""
 
 
+class NeMoASR(BaseASR):
+    """NeMo Speaker Diarization with Whisper ASR (from main_nemo.py)"""
+    
+    def __init__(self, whisper_model_name="base", device="cpu"):
+        super().__init__(f"nemo-whisper-{whisper_model_name}")
+        self.device = device
+        self.whisper_model_name = whisper_model_name
+        
+        print(f"Loading NeMo diarization model with Whisper {whisper_model_name}...")
+        
+        # Import SimpleSpeakerDiarization from main_nemo.py
+        try:
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from main_nemo import SimpleSpeakerDiarization
+            
+            self.diarizer = SimpleSpeakerDiarization(
+                pretrained_speaker_model="titanet_large",
+                window_length_sec=1.5,
+                shift_length_sec=0.75,
+                similarity_threshold=0.7,
+                embedding_update_weight=0.3,
+                min_similarity_gap=0.15,
+                whisper_model_name=whisper_model_name
+            )
+            print(f"✓ Loaded NeMo + Whisper model")
+        except ImportError as e:
+            print(f"ERROR: Failed to import SimpleSpeakerDiarization: {e}")
+            print("Make sure main_nemo.py is in the realtime/ directory")
+            sys.exit(1)
+    
+    def transcribe(self, audio_path):
+        """Transcribe audio file using NeMo diarization + Whisper"""
+        try:
+            # Process audio with NeMo diarization
+            result = self.diarizer.process_audio(
+                audio_path,
+                num_speakers=None,
+                max_speakers=8,
+                use_memory=False,
+                transcribe=True
+            )
+            
+            # Merge all transcripts from all speakers
+            if result and 'transcripts' in result and result['transcripts']:
+                all_text = []
+                # Sort segments by time across all speakers
+                all_segments = []
+                for speaker_id, segments in result['transcripts'].items():
+                    for seg in segments:
+                        all_segments.append(seg)
+                
+                # Sort by start time
+                all_segments.sort(key=lambda x: x['start'])
+                
+                # Concatenate text
+                for seg in all_segments:
+                    text = seg.get('text', '').strip()
+                    if text:
+                        all_text.append(text)
+                
+                return "".join(all_text)  # No spaces for Japanese
+            else:
+                return ""
+        except Exception as e:
+            print(f"Error transcribing {audio_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
+
+
 class SenseVoiceSpeechBrainASR(BaseASR):
     """SenseVoice + SpeechBrain combined model (from senvoi_spebrai_fixed.py)"""
     
@@ -381,8 +452,72 @@ class SenseVoiceSpeechBrainASR(BaseASR):
 # ============================================
 #   DATASET AND EVALUATION
 # ============================================
+def load_jvs_dataset(dataset_root):
+    """Load JVS dataset directly from directory structure
+    
+    Args:
+        dataset_root: Path to JVS dataset (e.g., dataset/jvs_ver1/jvs_ver1)
+    
+    Returns:
+        List of dicts with 'wav_path', 'transcript', 'speaker', 'category'
+    """
+    dataset = []
+    dataset_root = Path(dataset_root)
+    
+    if not dataset_root.exists():
+        print(f"Error: Dataset root not found: {dataset_root}")
+        return dataset
+    
+    print(f"Loading JVS dataset from: {dataset_root}")
+    
+    # Scan all speaker directories (jvsXXX)
+    speaker_dirs = sorted([d for d in dataset_root.iterdir() if d.is_dir() and d.name.startswith('jvs')])
+    
+    for speaker_dir in tqdm(speaker_dirs, desc="Loading speakers"):
+        speaker_id = speaker_dir.name
+        
+        # Scan subdirectories: falset10, nonpara30, parallel100, whisper10
+        for category in ["falset10", "nonpara30", "parallel100", "whisper10"]:
+            category_dir = speaker_dir / category
+            if not category_dir.exists():
+                continue
+            
+            # Load transcripts
+            transcript_file = category_dir / "transcripts_utf8.txt"
+            if not transcript_file.exists():
+                continue
+            
+            # Parse transcripts file
+            transcripts = {}
+            with open(transcript_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if ':' in line:
+                        filename, transcript = line.split(':', 1)
+                        transcripts[filename] = transcript
+            
+            # Get audio files
+            wav_dir = category_dir / "wav24kHz16bit"
+            if not wav_dir.exists():
+                continue
+            
+            for wav_file in wav_dir.glob("*.wav"):
+                filename_key = wav_file.stem  # e.g., VOICEACTRESS100_001
+                
+                if filename_key in transcripts:
+                    dataset.append({
+                        'wav_path': str(wav_file),
+                        'transcript': transcripts[filename_key],
+                        'speaker': speaker_id,
+                        'category': category
+                    })
+    
+    print(f"✓ Loaded {len(dataset)} audio files from {len(speaker_dirs)} speakers")
+    return dataset
+
+
 def load_dataset(csv_file):
-    """Load dataset from CSV file (JVS format)"""
+    """Load dataset from CSV file (JVS format) - legacy function"""
     dataset = []
     
     csv_path = Path(csv_file)
@@ -584,15 +719,21 @@ Examples:
     parser.add_argument(
         '--dataset',
         type=str,
-        default='dataset_400_testcases.csv',
-        help='Path to dataset CSV file (default: dataset_400_testcases.csv)'
+        default='../dataset/jvs_ver1/jvs_ver1',
+        help='Path to JVS dataset root directory or CSV file (default: ../dataset/jvs_ver1/jvs_ver1)'
+    )
+    parser.add_argument(
+        '--max_samples',
+        type=int,
+        default=None,
+        help='Maximum number of samples to evaluate (default: all)'
     )
     parser.add_argument(
         '--model',
         type=str,
-        default='whisper',
-        choices=['whisper', 'sensevoice', 'sensevoice-speechbrain'],
-        help='Model to evaluate: whisper, sensevoice, or sensevoice-speechbrain (default: whisper)'
+        default='nemo',
+        choices=['whisper', 'sensevoice', 'sensevoice-speechbrain', 'nemo'],
+        help='Model to evaluate: whisper, sensevoice, sensevoice-speechbrain, or nemo (default: nemo)'
     )
     parser.add_argument(
         '--whisper_size',
@@ -638,13 +779,33 @@ Examples:
     
     # Load dataset
     print("Loading dataset...")
-    dataset = load_dataset(args.dataset)
+    
+    # Check if dataset is CSV or directory
+    dataset_path = Path(args.dataset)
+    if not dataset_path.exists():
+        # Try relative to script location
+        dataset_path = Path(__file__).parent / args.dataset
+        if not dataset_path.exists():
+            dataset_path = Path(__file__).parent.parent / args.dataset
+    
+    if dataset_path.suffix == '.csv':
+        dataset = load_dataset(str(dataset_path))
+    elif dataset_path.is_dir():
+        dataset = load_jvs_dataset(str(dataset_path))
+    else:
+        print(f"Error: Dataset path not found: {args.dataset}")
+        return
     
     if not dataset:
         print("Error: No data loaded!")
         return
     
-    print(f"✓ Loaded {len(dataset)} samples from {args.dataset}")
+    # Limit samples if specified
+    if args.max_samples and args.max_samples < len(dataset):
+        print(f"Limiting to first {args.max_samples} samples")
+        dataset = dataset[:args.max_samples]
+    
+    print(f"✓ Loaded {len(dataset)} samples from {dataset_path}")
     
     # Show sample
     sample = dataset[0]
@@ -666,6 +827,11 @@ Examples:
         model = SenseVoiceASR(device=args.device)
     elif args.model == 'sensevoice-speechbrain':
         model = SenseVoiceSpeechBrainASR(device=args.device)
+    elif args.model == 'nemo':
+        model = NeMoASR(
+            whisper_model_name=args.whisper_size,
+            device=args.device
+        )
     else:
         print(f"Error: Unknown model {args.model}")
         return
