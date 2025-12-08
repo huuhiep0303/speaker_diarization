@@ -1,0 +1,51 @@
+# NeMo ClusteringDiarizer Configuration
+device: cpu
+num_workers: 0 # Set to 0 for Windows to avoid multiprocessing issues
+batch_size: 32
+sample_rate: 16000
+verbose: true # Enable verbose logging
+
+diarizer:
+  manifest_filepath: ??? # Will be set programmatically
+  out_dir: diar_output
+  oracle_vad: false
+  oracle_num_speakers: false
+  collar: 0.25 # Collar for scoring (in seconds)
+  ignore_overlap: true # Ignore overlapping speech during scoring
+
+  vad:
+    model_path: vad_multilingual_marblenet
+    external_vad_manifest: null
+    parameters:
+      window_length_in_sec: 0.025
+      shift_length_in_sec: 0.01
+      smoothing: "median"
+      overlap: 0.5
+      normalize_audio: true
+      onset: 0.5
+      offset: 0.5
+      pad_onset: 0.05
+      pad_offset: 0.05
+      min_duration_on: 0.2
+      min_duration_off: 0.2
+      filter_speech_first: true
+
+  speaker_embeddings:
+    model_path: titanet_large
+    parameters:
+      window_length_in_sec: 1.5
+      shift_length_in_sec: 0.75
+      multiscale_weights: [1.0]
+      save_embeddings: false
+
+  clustering:
+    parameters:
+      oracle_num_speakers: false
+      max_num_speakers: 8
+      enhanced_count_thres: 80
+      max_rp_threshold: 0.15 # Giảm từ 0.25 → 0.15 để merge tốt hơn
+      sparse_search_volume: 30
+      maj_vote_spk_count: false
+
+paths:
+  out_dir: diar_output

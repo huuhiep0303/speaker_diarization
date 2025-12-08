@@ -390,7 +390,9 @@ class SimpleSpeakerDiarization:
         if isinstance(audio_path_or_array, str):
             audio, sr = sf.read(audio_path_or_array)
             if sr != 16000:
-                raise ValueError(f"Sample rate must be 16kHz, got {sr}Hz")
+                # Resample to 16kHz
+                import librosa
+                audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
             audio = audio.astype(np.float32)
         else:
             audio = audio_path_or_array.astype(np.float32)

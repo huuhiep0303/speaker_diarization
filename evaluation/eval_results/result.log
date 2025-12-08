@@ -4,16 +4,16 @@ NOTE: SpeechBrain used by Whisper/SenseVoice/SenseVoice+SpeechBrain
 ======================================================================
 
 === Evaluating speechbrain embeddings ===
-Computing metrics on 3000 valid trials
-EER: 13.80% | FAR@EER: 13.80% | FRR@EER: 13.80% | Thr(EER): 0.3950
-Precision@EER: 75.75% | Recall@EER: 86.20% | F1@EER: 80.64%
-Best F1: 87.37% | Precision@F1: 97.42% | Recall@F1: 79.20% | Thr(F1): 0.5708
-AUC: 0.9350
+Computing metrics on 15000 valid trials
+EER: 15.57% | FAR@EER: 15.59% | FRR@EER: 15.56% | Thr(EER): 0.3790
+Precision@EER: 73.03% | Recall@EER: 84.44% | F1@EER: 78.32%
+Best F1: 86.38% | Precision@F1: 97.97% | Recall@F1: 77.24% | Thr(F1): 0.5870
+AUC: 0.9353
 
 === Evaluating nemo embeddings ===
-Computing metrics on 3000 valid trials
-EER: 13.40% | FAR@EER: 13.40% | FRR@EER: 13.40% | Thr(EER): 0.4039
-Precision@EER: 76.37% | Recall@EER: 86.60% | F1@EER: 81.16%
-Best F1: 88.68% | Precision@F1: 97.83% | Recall@F1: 81.10% | Thr(F1): 0.5794
-AUC: 0.9508
+Computing metrics on 15000 valid trials
+EER: 14.89% | FAR@EER: 14.88% | FRR@EER: 14.90% | Thr(EER): 0.4071
+Precision@EER: 74.09% | Recall@EER: 85.10% | F1@EER: 79.21%
+Best F1: 87.02% | Precision@F1: 97.68% | Recall@F1: 78.46% | Thr(F1): 0.5928
+AUC: 0.9403
 
