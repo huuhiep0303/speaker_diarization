@@ -1,19 +1,26 @@
 ======================================================================
 Speaker Embedding Comparison
-NOTE: SpeechBrain used by Whisper/SenseVoice/SenseVoice+SpeechBrain
+3 Models: SpeechBrain, NeMo, PyAnnote
 ======================================================================
 
 === Evaluating speechbrain embeddings ===
-Computing metrics on 15000 valid trials
-EER: 15.57% | FAR@EER: 15.59% | FRR@EER: 15.56% | Thr(EER): 0.3790
-Precision@EER: 73.03% | Recall@EER: 84.44% | F1@EER: 78.32%
-Best F1: 86.38% | Precision@F1: 97.97% | Recall@F1: 77.24% | Thr(F1): 0.5870
-AUC: 0.9353
+Computing metrics on 1500 valid trials
+EER: 12.50% | FAR@EER: 12.20% | FRR@EER: 12.80% | Thr(EER): 0.3426
+Precision@EER: 78.14% | Recall@EER: 87.20% | F1@EER: 82.42%
+Best F1: 89.43% | Precision@F1: 99.51% | Recall@F1: 81.20% | Thr(F1): 0.5265
+AUC: 0.9437
 
 === Evaluating nemo embeddings ===
-Computing metrics on 15000 valid trials
-EER: 14.89% | FAR@EER: 14.88% | FRR@EER: 14.90% | Thr(EER): 0.4071
-Precision@EER: 74.09% | Recall@EER: 85.10% | F1@EER: 79.21%
-Best F1: 87.02% | Precision@F1: 97.68% | Recall@F1: 78.46% | Thr(F1): 0.5928
-AUC: 0.9403
+Computing metrics on 1500 valid trials
+EER: 10.85% | FAR@EER: 10.90% | FRR@EER: 10.80% | Thr(EER): 0.3721
+Precision@EER: 80.36% | Recall@EER: 89.20% | F1@EER: 84.55%
+Best F1: 89.45% | Precision@F1: 98.09% | Recall@F1: 82.20% | Thr(F1): 0.5517
+AUC: 0.9521
+
+=== Evaluating pyannote embeddings ===
+Computing metrics on 1500 valid trials
+EER: 7.80% | FAR@EER: 7.80% | FRR@EER: 7.80% | Thr(EER): 0.3610
+Precision@EER: 85.53% | Recall@EER: 92.20% | F1@EER: 88.74%
+Best F1: 91.51% | Precision@F1: 98.84% | Recall@F1: 85.20% | Thr(F1): 0.4753
+AUC: 0.9716
 

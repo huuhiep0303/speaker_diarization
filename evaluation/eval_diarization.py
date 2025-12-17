@@ -89,6 +89,11 @@ MODELS = {
         "name": "NeMo TitaNet Large",
         "script": "main_nemo.py",
         "note": "Different architecture from SpeechBrain"
+    },
+    "pyannote": {
+        "name": "PyAnnote WeSpeaker-ResNet34",
+        "script": "main_pyannote.py",
+        "note": "PyAnnote speaker-diarization-3.1 embedding model"
     }
 }
 
@@ -354,6 +359,26 @@ def load_nemo_model():
         return None
 
 
+def load_pyannote_model():
+    """Load PyAnnote WeSpeaker-ResNet34 speaker embedding model"""
+    try:
+        print("Loading PyAnnote WeSpeaker-ResNet34 model...")
+        from pyannote.audio.pipelines.speaker_verification import PretrainedSpeakerEmbedding
+        
+        # Load embedding model
+        device = torch.device("cpu")
+        embedding_model = PretrainedSpeakerEmbedding(
+            "pyannote/wespeaker-voxceleb-resnet34-LM",
+            device=device
+        )
+        
+        print("✓ PyAnnote model loaded successfully")
+        return embedding_model
+    except Exception as e:
+        print(f"✗ Error loading PyAnnote model: {e}")
+        return None
+
+
 def extract_nemo_embedding(audio_path, speaker_model):
     """Extract speaker embedding using NeMo TitaNet Large"""
     try:
@@ -392,13 +417,56 @@ def extract_nemo_embedding(audio_path, speaker_model):
         return None
 
 
+def extract_pyannote_embedding(audio_path, embedding_model):
+    """Extract speaker embedding using PyAnnote WeSpeaker-ResNet34"""
+    try:
+        import soundfile as sf
+        
+        # Load audio
+        audio, sr = sf.read(str(audio_path))
+        
+        # Convert to mono if stereo
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
+        
+        # Resample to 16kHz if needed (PyAnnote expects 16kHz)
+        if sr != 16000:
+            import librosa
+            audio = librosa.resample(audio, orig_sr=sr, target_sr=16000)
+            sr = 16000
+        
+        # Convert to torch tensor: (batch, channel, samples)
+        # PyAnnote expects 3D tensor with channel dimension
+        waveform = torch.from_numpy(audio).float().unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
+        
+        # Extract embedding - pass waveform directly
+        # PyAnnote PretrainedSpeakerEmbedding handles device internally
+        with torch.no_grad():
+            embedding = embedding_model(waveform)
+            # embedding is already on CPU
+            if isinstance(embedding, torch.Tensor):
+                embedding = embedding.squeeze().cpu().numpy()
+            else:
+                embedding = np.array(embedding).squeeze()
+        
+        # Normalize
+        embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+        
+        return embedding
+    except Exception as e:
+        print(f"Error extracting PyAnnote embedding from {audio_path}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
     """
-    Extract embeddings for all files in trials using SpeechBrain and NeMo.
+    Extract embeddings for all files in trials using SpeechBrain, NeMo, and PyAnnote.
     Cache results to avoid re-extraction.
     
     Returns:
-        dict: {file_path: {'speechbrain': emb, 'nemo': emb}}
+        dict: {file_path: {'speechbrain': emb, 'nemo': emb, 'pyannote': emb}}
     """
     os.makedirs(cache_dir, exist_ok=True)
     
@@ -436,10 +504,11 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
                 # Save migrated cache
                 save_embedding_cache(emb_cache, cache_file)
             
-            # Check if all files are in cache with both embedding types
+            # Check if all files are in cache with all embedding types
             missing_files = [f for f in all_files if f not in emb_cache or 
                            'speechbrain' not in emb_cache[f] or 
-                           'nemo' not in emb_cache[f]]
+                           'nemo' not in emb_cache[f] or
+                           'pyannote' not in emb_cache[f]]
             if len(missing_files) == 0:
                 print("✓ All embeddings found in cache!")
                 return emb_cache
@@ -458,13 +527,17 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
     
     speechbrain_model = load_speechbrain_model()
     nemo_model = load_nemo_model()
+    pyannote_model = load_pyannote_model()
     
     if speechbrain_model is None:
         print("ERROR: Failed to load SpeechBrain model")
         return {}
     
     if nemo_model is None:
-        print("WARNING: Failed to load NeMo model, will only extract SpeechBrain embeddings")
+        print("WARNING: Failed to load NeMo model, will only extract SpeechBrain and PyAnnote embeddings")
+    
+    if pyannote_model is None:
+        print("WARNING: Failed to load PyAnnote model, will only extract SpeechBrain and NeMo embeddings")
     
     # Extract embeddings
     print(f"\nExtracting embeddings for {len(all_files)} files...")
@@ -488,6 +561,12 @@ def extract_all_embeddings(trials, cache_dir="eval_cache", use_cache=True):
             nemo_emb = extract_nemo_embedding(file_path, nemo_model)
             if nemo_emb is not None:
                 emb_cache[file_path]['nemo'] = nemo_emb
+        
+        # Extract PyAnnote embedding if not cached
+        if pyannote_model is not None and 'pyannote' not in emb_cache[file_path]:
+            pyannote_emb = extract_pyannote_embedding(file_path, pyannote_model)
+            if pyannote_emb is not None:
+                emb_cache[file_path]['pyannote'] = pyannote_emb
     
     # Save cache
     save_embedding_cache(emb_cache, cache_file)
@@ -695,9 +774,9 @@ def evaluate_embedding_type(embedding_type, trials, emb_cache, trials_info, outp
     print(f"\n=== Evaluating {embedding_type} embeddings ===")
     
     # Validate embedding type
-    if embedding_type not in ['speechbrain', 'nemo']:
+    if embedding_type not in ['speechbrain', 'nemo', 'pyannote']:
         print(f"ERROR: Unknown embedding type: {embedding_type}")
-        print("Valid types: speechbrain, nemo")
+        print("Valid types: speechbrain, nemo, pyannote")
         return None
     
     scores, labels = compute_scores_from_cache(trials, emb_cache, embedding_type)
@@ -735,11 +814,12 @@ def plot_roc_curves(results, output_dir="eval_results"):
     
     colors = {
         "speechbrain": "blue",
-        "nemo": "red"
+        "nemo": "red",
+        "pyannote": "green"
     }
     
-    for emb_type in ["speechbrain", "nemo"]:
-        if results[emb_type] is None:
+    for emb_type in ["speechbrain", "nemo", "pyannote"]:
+        if emb_type not in results or results[emb_type] is None:
             continue
             
         metrics = results[emb_type]
@@ -775,11 +855,12 @@ def plot_det_curves(results, output_dir="eval_results"):
     
     colors = {
         "speechbrain": "blue",
-        "nemo": "red"
+        "nemo": "red",
+        "pyannote": "green"
     }
     
-    for emb_type in ["speechbrain", "nemo"]:
-        if results[emb_type] is None:
+    for emb_type in ["speechbrain", "nemo", "pyannote"]:
+        if emb_type not in results or results[emb_type] is None:
             continue
             
         metrics = results[emb_type]
@@ -819,11 +900,12 @@ def plot_precision_recall_curves(results, output_dir="eval_results"):
     
     colors = {
         "speechbrain": "blue",
-        "nemo": "red"
+        "nemo": "red",
+        "pyannote": "green"
     }
     
-    for emb_type in ["speechbrain", "nemo"]:
-        if results[emb_type] is None:
+    for emb_type in ["speechbrain", "nemo", "pyannote"]:
+        if emb_type not in results or results[emb_type] is None:
             continue
             
         metrics = results[emb_type]
@@ -892,12 +974,13 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     scores_data = {}
     
     print("\n" + "="*70)
-    print("NOTE: Only evaluating 2 models:")
+    print("Evaluating 3 speaker embedding models:")
     print("  1. SpeechBrain ECAPA-TDNN (used by Whisper/SenseVoice models)")
     print("  2. NeMo TitaNet Large (different architecture)")
+    print("  3. PyAnnote WeSpeaker-ResNet34 (speaker-diarization-3.1)")
     print("="*70 + "\n")
     
-    for emb_type in ["speechbrain", "nemo"]:
+    for emb_type in ["speechbrain", "nemo", "pyannote"]:
         result = evaluate_embedding_type(emb_type, trials, emb_cache, trials_info, output_dir)
         
         if result is None:
@@ -919,10 +1002,10 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     with open(log_file, 'w', encoding='utf-8') as f:
         f.write("="*70 + "\n")
         f.write("Speaker Embedding Comparison\n")
-        f.write("NOTE: SpeechBrain used by Whisper/SenseVoice/SenseVoice+SpeechBrain\n")
+        f.write("3 Models: SpeechBrain, NeMo, PyAnnote\n")
         f.write("="*70 + "\n\n")
         
-        for emb_type in ["speechbrain", "nemo"]:
+        for emb_type in ["speechbrain", "nemo", "pyannote"]:
             if results[emb_type]:
                 m = results[emb_type]
                 f.write(f"=== Evaluating {emb_type} embeddings ===\n")
@@ -942,8 +1025,8 @@ def evaluate_dataset(dataset_path, output_dir="eval_results", use_cache=True,
     
     # Print summary
     print("\n=== Final Results ===")
-    for emb_type in ["speechbrain", "nemo"]:
-        if results[emb_type]:
+    for emb_type in ["speechbrain", "nemo", "pyannote"]:
+        if emb_type in results and results[emb_type]:
             model_info = MODELS[emb_type]['name']
             if 'note' in MODELS[emb_type]:
                 model_info += f" ({MODELS[emb_type]['note']})"
@@ -988,9 +1071,10 @@ def main():
     print("="*70)
     print("Speaker Verification Evaluation")
     print("="*70)
-    print("Evaluating 2 embedding models:")
+    print("Evaluating 3 embedding models:")
     print("  1. SpeechBrain ECAPA-TDNN (used by Whisper/SenseVoice)")
     print("  2. NeMo TitaNet Large")
+    print("  3. PyAnnote WeSpeaker-ResNet34")
     if args.max_speakers:
         print(f"\n📊 Limiting to first {args.max_speakers} speakers")
     if args.clear_cache:

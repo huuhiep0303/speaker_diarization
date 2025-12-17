@@ -34,6 +34,7 @@ try:
     import jiwer.transforms as tr
     import regex as re
     from sudachipy import dictionary, tokenizer
+    from collections import Counter, defaultdict
 except ImportError:
     print("ERROR: Missing required packages. Install with:")
     print("  pip install jiwer regex sudachipy")
@@ -156,6 +157,115 @@ def eval_score(ground_truth, prediction):
         cer_score = 1.0
     
     return wer_score, cer_score
+
+
+def calculate_unit_test_metrics(ground_truth, prediction):
+    """
+    Calculate comprehensive unit test metrics for Japanese ASR evaluation.
+    
+    Metrics include:
+    - Character-level: precision, recall, F1-score
+    - Token-level: precision, recall, F1-score (using Sudachi)
+    - Confusion statistics: insertions, deletions, substitutions
+    - Sentence accuracy (exact match)
+    
+    Args:
+        ground_truth: Ground truth transcript (Japanese)
+        prediction: Model prediction (Japanese)
+    
+    Returns:
+        dict with detailed metrics
+    """
+    # Normalize texts
+    gt_norm = normalize_text_japanese(ground_truth)
+    pred_norm = normalize_text_japanese(prediction)
+    
+    metrics = {}
+    
+    # === 1. Sentence-level accuracy ===
+    metrics['exact_match'] = 1.0 if gt_norm == pred_norm else 0.0
+    
+    # === 2. Character-level metrics ===
+    gt_chars = set(gt_norm)
+    pred_chars = set(pred_norm)
+    
+    # True positives: characters that appear in both
+    tp_chars = len(gt_chars & pred_chars)
+    fp_chars = len(pred_chars - gt_chars)  # False positives
+    fn_chars = len(gt_chars - pred_chars)  # False negatives
+    
+    # Precision, Recall, F1 for character set
+    char_precision = tp_chars / len(pred_chars) if len(pred_chars) > 0 else 0.0
+    char_recall = tp_chars / len(gt_chars) if len(gt_chars) > 0 else 0.0
+    char_f1 = 2 * char_precision * char_recall / (char_precision + char_recall) if (char_precision + char_recall) > 0 else 0.0
+    
+    metrics['char_precision'] = char_precision
+    metrics['char_recall'] = char_recall
+    metrics['char_f1'] = char_f1
+    
+    # === 3. Token-level metrics (using Sudachi) ===
+    try:
+        tokenizer_obj = dictionary.Dictionary().create()
+        mode = tokenizer.Tokenizer.SplitMode.A
+        
+        gt_tokens = [m.surface() for m in tokenizer_obj.tokenize(gt_norm, mode)]
+        pred_tokens = [m.surface() for m in tokenizer_obj.tokenize(pred_norm, mode)]
+        
+        gt_token_set = set(gt_tokens)
+        pred_token_set = set(pred_tokens)
+        
+        tp_tokens = len(gt_token_set & pred_token_set)
+        fp_tokens = len(pred_token_set - gt_token_set)
+        fn_tokens = len(gt_token_set - pred_token_set)
+        
+        token_precision = tp_tokens / len(pred_token_set) if len(pred_token_set) > 0 else 0.0
+        token_recall = tp_tokens / len(gt_token_set) if len(gt_token_set) > 0 else 0.0
+        token_f1 = 2 * token_precision * token_recall / (token_precision + token_recall) if (token_precision + token_recall) > 0 else 0.0
+        
+        metrics['token_precision'] = token_precision
+        metrics['token_recall'] = token_recall
+        metrics['token_f1'] = token_f1
+        metrics['num_gt_tokens'] = len(gt_tokens)
+        metrics['num_pred_tokens'] = len(pred_tokens)
+        
+    except Exception as e:
+        print(f"Warning: Token-level metrics calculation failed: {e}")
+        metrics['token_precision'] = 0.0
+        metrics['token_recall'] = 0.0
+        metrics['token_f1'] = 0.0
+        metrics['num_gt_tokens'] = 0
+        metrics['num_pred_tokens'] = 0
+    
+    # === 4. Edit distance breakdown (insertions, deletions, substitutions) ===
+    try:
+        # Use jiwer to get detailed edit operations
+        from jiwer import compute_measures
+        
+        measures = compute_measures(
+            gt_norm,
+            pred_norm,
+            truth_transform=tr.Compose([tr.RemoveMultipleSpaces(), tr.Strip()]),
+            hypothesis_transform=tr.Compose([tr.RemoveMultipleSpaces(), tr.Strip()])
+        )
+        
+        metrics['insertions'] = measures['insertions']
+        metrics['deletions'] = measures['deletions']
+        metrics['substitutions'] = measures['substitutions']
+        metrics['hits'] = measures['hits']
+        
+    except Exception as e:
+        print(f"Warning: Edit distance breakdown failed: {e}")
+        metrics['insertions'] = 0
+        metrics['deletions'] = 0
+        metrics['substitutions'] = 0
+        metrics['hits'] = 0
+    
+    # === 5. Length metrics ===
+    metrics['gt_length'] = len(gt_norm)
+    metrics['pred_length'] = len(pred_norm)
+    metrics['length_ratio'] = len(pred_norm) / len(gt_norm) if len(gt_norm) > 0 else 0.0
+    
+    return metrics
 
 
 # ============================================
@@ -564,7 +674,11 @@ def evaluate_model_with_checkpoint(model, dataset, checkpoint_file="eval_results
             writer = csv.writer(f)
             writer.writerow([
                 "file_path", "ground_truth", "prediction", 
-                "wer", "cer", "rtf", "audio_duration", "processing_time"
+                "wer", "cer", "rtf", "audio_duration", "processing_time",
+                "exact_match", "char_precision", "char_recall", "char_f1",
+                "token_precision", "token_recall", "token_f1",
+                "insertions", "deletions", "substitutions", "hits",
+                "gt_length", "pred_length", "length_ratio"
             ])
         print(f"✓ Created new checkpoint file: {checkpoint_path}")
     
@@ -608,12 +722,29 @@ def evaluate_model_with_checkpoint(model, dataset, checkpoint_file="eval_results
             # Calculate scores
             wer_score, cer_score = eval_score(ground_truth, prediction)
             
+            # Calculate unit test metrics
+            unit_metrics = calculate_unit_test_metrics(ground_truth, prediction)
+            
             # Save result immediately (checkpoint)
             with open(checkpoint_path, "a", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
                     wav_path, ground_truth, prediction,
-                    wer_score, cer_score, rtf, audio_duration, processing_time
+                    wer_score, cer_score, rtf, audio_duration, processing_time,
+                    unit_metrics.get('exact_match', 0.0),
+                    unit_metrics.get('char_precision', 0.0),
+                    unit_metrics.get('char_recall', 0.0),
+                    unit_metrics.get('char_f1', 0.0),
+                    unit_metrics.get('token_precision', 0.0),
+                    unit_metrics.get('token_recall', 0.0),
+                    unit_metrics.get('token_f1', 0.0),
+                    unit_metrics.get('insertions', 0),
+                    unit_metrics.get('deletions', 0),
+                    unit_metrics.get('substitutions', 0),
+                    unit_metrics.get('hits', 0),
+                    unit_metrics.get('gt_length', 0),
+                    unit_metrics.get('pred_length', 0),
+                    unit_metrics.get('length_ratio', 0.0)
                 ])
             
         except Exception as e:
@@ -627,6 +758,13 @@ def evaluate_model_with_checkpoint(model, dataset, checkpoint_file="eval_results
     wer_scores = []
     cer_scores = []
     rtf_scores = []
+    exact_matches = []
+    char_precisions = []
+    char_recalls = []
+    char_f1s = []
+    token_precisions = []
+    token_recalls = []
+    token_f1s = []
     
     with open(checkpoint_path, "r", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -637,6 +775,16 @@ def evaluate_model_with_checkpoint(model, dataset, checkpoint_file="eval_results
                     wer_scores.append(float(row[3]))
                     cer_scores.append(float(row[4]))
                     rtf_scores.append(float(row[5]))
+                    
+                    # Unit test metrics (if available)
+                    if len(row) >= 15:
+                        exact_matches.append(float(row[8]))
+                        char_precisions.append(float(row[9]))
+                        char_recalls.append(float(row[10]))
+                        char_f1s.append(float(row[11]))
+                        token_precisions.append(float(row[12]))
+                        token_recalls.append(float(row[13]))
+                        token_f1s.append(float(row[14]))
                 except ValueError:
                     continue
     
@@ -650,6 +798,14 @@ def evaluate_model_with_checkpoint(model, dataset, checkpoint_file="eval_results
         'median_rtf': float(np.median(rtf_scores)) if rtf_scores else 0.0,
         'min_rtf': float(np.min(rtf_scores)) if rtf_scores else 0.0,
         'max_rtf': float(np.max(rtf_scores)) if rtf_scores else 0.0,
+        # Unit test metrics
+        'exact_match_rate': float(np.mean(exact_matches)) if exact_matches else 0.0,
+        'avg_char_precision': float(np.mean(char_precisions)) if char_precisions else 0.0,
+        'avg_char_recall': float(np.mean(char_recalls)) if char_recalls else 0.0,
+        'avg_char_f1': float(np.mean(char_f1s)) if char_f1s else 0.0,
+        'avg_token_precision': float(np.mean(token_precisions)) if token_precisions else 0.0,
+        'avg_token_recall': float(np.mean(token_recalls)) if token_recalls else 0.0,
+        'avg_token_f1': float(np.mean(token_f1s)) if token_f1s else 0.0,
         'timestamp': datetime.now().isoformat(),
         'checkpoint_file': str(checkpoint_path)
     }
@@ -664,6 +820,7 @@ def print_summary(summary):
     print("="*70)
     print(f"Model:              {summary['model']}")
     print(f"Samples evaluated:  {summary['num_samples']}")
+    print(f"\n--- Basic Metrics ---")
     print(f"Average WER:        {summary['avg_wer']:.4f} ({summary['avg_wer']*100:.2f}%)")
     print(f"Average CER:        {summary['avg_cer']:.4f} ({summary['avg_cer']*100:.2f}%)")
     print(f"Average RTF:        {summary['avg_rtf']:.4f}")
@@ -678,6 +835,19 @@ def print_summary(summary):
     else:
         slowdown = summary['avg_rtf']
         print(f"  → {slowdown:.2f}x slower than realtime ✗")
+    
+    # Print unit test metrics if available
+    if 'exact_match_rate' in summary:
+        print(f"\n--- Unit Test Metrics ---")
+        print(f"Exact Match Rate:   {summary['exact_match_rate']:.4f} ({summary['exact_match_rate']*100:.2f}%)")
+        print(f"\nCharacter-level:")
+        print(f"  Precision:        {summary['avg_char_precision']:.4f}")
+        print(f"  Recall:           {summary['avg_char_recall']:.4f}")
+        print(f"  F1-Score:         {summary['avg_char_f1']:.4f}")
+        print(f"\nToken-level:")
+        print(f"  Precision:        {summary['avg_token_precision']:.4f}")
+        print(f"  Recall:           {summary['avg_token_recall']:.4f}")
+        print(f"  F1-Score:         {summary['avg_token_f1']:.4f}")
     
     print(f"\nCheckpoint file:    {summary['checkpoint_file']}")
     print("="*70 + "\n")

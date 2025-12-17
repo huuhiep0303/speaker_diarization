@@ -1,13 +1,3 @@
-"""
-Comparison script for ASR evaluation results
-So sánh kết quả đánh giá ASR của 3 model:
-- Whisper Small
-- SenseVoice  
-- SenseVoice + SpeechBrain
-
-Metrics compared: WER, CER, RTF (Real-time Factor)
-"""
-
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
