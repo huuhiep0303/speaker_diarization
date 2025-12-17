@@ -1,11 +1,3 @@
-"""
-Script để tạo dataset test cases từ JVS Corpus cho đánh giá speaker diarization và ASR.
-Dataset JVS: https://sites.google.com/site/shinnosuketakamichi/research-topics/jvs_corpus
-
-Usage:
-    python create_dataset.py --jvs_root ../dataset/jvs_ver1 --output dataset_400_testcases.csv
-"""
-
 import os
 import csv
 import argparse

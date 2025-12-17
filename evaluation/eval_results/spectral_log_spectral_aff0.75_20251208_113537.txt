@@ -1,0 +1,30 @@
+================================================================================
+NeMo Spectral Clustering Evaluation
+================================================================================
+
+Model: titanet_large
+Affinity threshold: 0.75
+Max speakers detect: 8
+Dataset: D:\WORKSPACE\VJ\speaker-diarization\realtime\dataset\jvs_ver1\jvs_ver1
+Date: 2025-12-08T11:35:37.729598
+
+Success: 100/100
+
+Clustering Quality:
+  Silhouette: 0.2622 ± 0.1091
+  Davies-Bouldin: 1.2464 ± 0.3305
+  Calinski-Harabasz: 2.40 ± 0.74
+
+Purity & Coverage:
+  Mean Purity: 57.79%
+  Perfect Rate: 5.00%
+
+Speaker Count:
+  Accuracy: 5.00%
+  Mean Error: 1.95
+  Over-seg: 95.00%
+
+Distances:
+  Intra: 0.1025
+  Inter: 0.3217
+  Ratio: 4.09

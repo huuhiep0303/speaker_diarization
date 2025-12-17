@@ -1,0 +1,25 @@
+======================================================================
+EVALUATION SUMMARY
+======================================================================
+
+📊 Dataset Statistics:
+   Total Files: 10
+   Total Segments: 595
+   Avg Speakers/File: 4.50
+
+📈 Clustering Metrics (Mean ± Std):
+   silhouette_score         : 0.0573 ± 0.0557
+   davies_bouldin_index     : 2.7641 ± 1.6127
+   calinski_harabasz_index  : 20.5952 ± 27.8203
+
+📉 Diarization Metrics (Mean ± Std):
+   DER                      : 0.4892 ± 0.2363
+   JER                      : 0.5837 ± 0.2304
+   FA                       : 0.0327 ± 0.0385
+   MISS                     : 0.0000 ± 0.0000
+   CONFUSION                : 0.4565 ± 0.2263
+   precision                : 0.9456 ± 0.0528
+   recall                   : 1.0000 ± 0.0000
+   f1                       : 0.9712 ± 0.0289
+
+======================================================================

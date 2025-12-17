@@ -11,7 +11,7 @@ diarizer:
   oracle_vad: false
   oracle_num_speakers: false
   collar: 0.25 # Collar for scoring (in seconds)
-  ignore_overlap: true # Ignore overlapping speech during scoring
+  ignore_overlap: false # Enable overlap detection for better segmentation
 
   vad:
     model_path: vad_multilingual_marblenet
@@ -22,12 +22,12 @@ diarizer:
       smoothing: "median"
       overlap: 0.5
       normalize_audio: true
-      onset: 0.5
-      offset: 0.5
+      onset: 0.3 # Lowered from 0.5 to detect more speech
+      offset: 0.3 # Lowered from 0.5
       pad_onset: 0.05
       pad_offset: 0.05
-      min_duration_on: 0.2
-      min_duration_off: 0.2
+      min_duration_on: 0.1 # Lowered from 0.2 to catch shorter segments
+      min_duration_off: 0.1 # Lowered from 0.2
       filter_speech_first: true
 
   speaker_embeddings:

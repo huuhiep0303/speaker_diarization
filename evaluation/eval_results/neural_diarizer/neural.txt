@@ -1,0 +1,113 @@
+================================================================================
+NEURAL DIARIZER INITIALIZATION - NeMo ClusteringDiarizer
+================================================================================
+Timestamp: 2025-12-10 10:23:42
+Device: cpu
+Output Directory: evaluation\eval_results\neural_diarizer
+Max Speakers: 8
+Oracle Speakers: 2
+
+📋 Loaded config from: diar_infer_config.yaml
+
+>>> Configuration Details
+------------------------------------------------------------
+VAD Model: vad_multilingual_marblenet
+  Window: 0.025s
+  Shift: 0.01s
+  Onset: 0.5
+  Offset: 0.5
+  Min Duration ON: 0.2s
+  Min Duration OFF: 0.2s
+
+Speaker Embedding Model: titanet_large
+  Window: 1.5s
+  Shift: 0.75s
+
+Clustering Parameters:
+  Max Speakers: 8
+  Max RP Threshold: 0.15
+  Enhanced Count Threshold: 80
+
+✅ Neural Diarizer initialized!
+
+================================================================================
+STARTING NEURAL DIARIZATION PIPELINE
+================================================================================
+Audio File: TestE.wav
+Full Path: D:\WORKSPACE\VJ\speaker-diarization\realtime\TestE.wav
+
+>>> Step 1: Audio Input & Validation
+------------------------------------------------------------
+Sample Rate: 16000 Hz
+Duration: 42.80 seconds
+Total Samples: 684720
+Audio Shape: (684720,)
+✅ Audio loaded and validated
+
+🎯 Using Oracle Mode: 2 speakers
+
+>>> Step 2: Manifest Creation
+------------------------------------------------------------
+Manifest created: evaluation\eval_results\neural_diarizer\input_manifest.json
+  Audio: D:\WORKSPACE\VJ\speaker-diarization\realtime\TestE.wav
+  Duration: 42.80s
+  Num Speakers: 2
+✅ Manifest created successfully
+
+>>> Step 0: Loading NeMo Models
+------------------------------------------------------------
+Loading NeMo ClusteringDiarizer models...
+  - VAD Model: Loading...
+  - Speaker Embedding Model: Loading...
+✅ All models loaded successfully!
+
+>>> Step 3-6: Running NeMo Diarization Pipeline
+------------------------------------------------------------
+This includes:
+  Step 3: Voice Activity Detection (VAD)
+  Step 4: Speech Segmentation
+  Step 5: Speaker Embeddings Extraction
+  Step 6: Clustering (Affinity → Laplacian → Eigenvectors → K-means)
+
+Starting NeMo pipeline execution...
+
+
+✅ NeMo pipeline completed!
+
+>>> Step 7: Post-processing & Results
+------------------------------------------------------------
+Parsing RTTM file: evaluation\eval_results\neural_diarizer\pred_rttms\TestE.rttm
+✅ Parsed 6 segments from RTTM
+Total Segments: 6
+Number of Speakers Detected: 2
+Speaker IDs: ['speaker_0', 'speaker_1']
+
+Speech Statistics:
+  Total Speech Time: 42.80s
+  Speech Ratio: 100.0%
+  Avg Segment Duration: 7.13s
+  Min Segment Duration: 3.38s
+  Max Segment Duration: 10.50s
+
+Per-Speaker Statistics:
+  speaker_0:
+    Segments: 3
+    Total Time: 19.17s (44.8% of audio)
+    Avg Duration: 6.39s
+  speaker_1:
+    Segments: 3
+    Total Time: 23.62s (55.2% of audio)
+    Avg Duration: 7.88s
+
+First 10 segments:
+  [  0.00s -   3.38s] speaker_1 (3.38s)
+  [  3.38s -   9.38s] speaker_0 (6.00s)
+  [  9.38s -  19.88s] speaker_1 (10.50s)
+  [ 19.88s -  26.62s] speaker_0 (6.75s)
+  [ 26.62s -  36.38s] speaker_1 (9.75s)
+  [ 36.38s -  42.80s] speaker_0 (6.42s)
+
+================================================================================
+PIPELINE COMPLETED SUCCESSFULLY
+================================================================================
+Timestamp: 2025-12-10 10:33:41
